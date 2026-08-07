@@ -1,0 +1,48 @@
+Panels:
+  - Class: rviz_common/Displays
+Visualization Manager:
+  Class: ""
+  Global Options:
+    Fixed Frame: pelvis
+  Displays:
+    - Class: rviz_default_plugins/Grid
+      Name: Grid
+      Enabled: true
+    - Class: rviz_default_plugins/RobotModel
+      Name: G1
+      Enabled: true
+      Description Source: Topic
+      Description Topic:
+        Value: /robot_description
+    - Class: rviz_default_plugins/TF
+      Name: TF
+      Enabled: true
+      Show Axes: false
+      Show Names: false
+    - Class: rviz_default_plugins/PointCloud2
+      Name: D435i Point Cloud
+      Enabled: true
+      Topic:
+        Value: /camera/camera/depth/color/points
+        Reliability Policy: Best Effort
+      Style: Points
+      Size (Pixels): 2
+      Color Transformer: RGB8
+    - Class: rviz_default_plugins/Image
+      Name: D435i RGB
+      Enabled: true
+      Topic:
+        Value: /camera/camera/color/image_raw
+        Reliability Policy: Best Effort
+    - Class: rviz_default_plugins/MarkerArray
+      Name: Pick Debug Markers
+      Enabled: true
+      Topic:
+        Value: /g1/task/markers
+        Durability Policy: Transient Local
+Views:
+  Current:
+    Class: rviz_default_plugins/Orbit
+    Distance: 3.5
+    Pitch: 0.35
+    Yaw: 0.75

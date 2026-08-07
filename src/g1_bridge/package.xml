@@ -1,0 +1,24 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>g1_bridge</name>
+  <version>0.1.0</version>
+  <description>Safe ROS 2 bridge between Unitree G1 DDS and standard ROS messages.</description>
+  <maintainer email="maintainer@example.com">G1 ROS 2 team</maintainer>
+  <license>BSD-3-Clause</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <depend>diagnostic_msgs</depend>
+  <depend>geometry_msgs</depend>
+  <depend>rclcpp</depend>
+  <depend>sensor_msgs</depend>
+  <depend>std_msgs</depend>
+  <depend>std_srvs</depend>
+  <depend>unitree_api</depend>
+  <depend>unitree_hg</depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>
+

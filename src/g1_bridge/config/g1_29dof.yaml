@@ -1,0 +1,36 @@
+g1_bridge:
+  ros__parameters:
+    low_state_topic: lowstate
+    command_request_topic: /api/sport/request
+    joint_state_topic: /g1/joint_states
+    imu_topic: /g1/imu/data
+    imu_frame_id: torso_imu
+
+    # The bridge starts disarmed. Call /g1/enable_control before sending motion.
+    start_control_enabled: false
+    require_recent_low_state: true
+    low_state_timeout_s: 0.5
+    cmd_timeout_s: 0.25
+    command_publish_rate_hz: 20.0
+    telemetry_publish_rate_hz: 50.0
+    command_duration_s: 0.2
+
+    max_linear_x: 0.5
+    max_linear_y: 0.3
+    max_angular_z: 0.8
+
+    # G1 29-DoF motor IDs, as defined by the official Unitree G1 SDK.
+    joint_indices: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14,
+                    15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28]
+    joint_names: [left_hip_pitch_joint, left_hip_roll_joint, left_hip_yaw_joint,
+                  left_knee_joint, left_ankle_pitch_joint, left_ankle_roll_joint,
+                  right_hip_pitch_joint, right_hip_roll_joint, right_hip_yaw_joint,
+                  right_knee_joint, right_ankle_pitch_joint, right_ankle_roll_joint,
+                  waist_yaw_joint, waist_roll_joint, waist_pitch_joint,
+                  left_shoulder_pitch_joint, left_shoulder_roll_joint,
+                  left_shoulder_yaw_joint, left_elbow_joint,
+                  left_wrist_roll_joint, left_wrist_pitch_joint, left_wrist_yaw_joint,
+                  right_shoulder_pitch_joint, right_shoulder_roll_joint,
+                  right_shoulder_yaw_joint, right_elbow_joint,
+                  right_wrist_roll_joint, right_wrist_pitch_joint, right_wrist_yaw_joint]
+
