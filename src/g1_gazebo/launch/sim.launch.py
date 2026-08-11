@@ -14,7 +14,7 @@ def generate_launch_description():
     package_share = Path(get_package_share_directory("g1_gazebo"))
     ros_gz_share = Path(get_package_share_directory("ros_gz_sim"))
     description_dir = Path(os.environ.get("G1_DESCRIPTION_DIR", "/opt/unitree_ros/robots/g1_description"))
-    urdf_path = description_dir / "g1_29dof_gazebo.urdf"
+    urdf_path = description_dir / "g1_29dof_with_dex3_gazebo.urdf"
     world_path = package_share / "worlds" / "g1_world.sdf"
     bridge_path = package_share / "config" / "bridge.yaml"
 

@@ -34,3 +34,13 @@ g1_bridge:
                   right_shoulder_yaw_joint, right_elbow_joint,
                   right_wrist_roll_joint, right_wrist_pitch_joint, right_wrist_yaw_joint]
 
+dex3_bridge:
+  ros__parameters:
+    start_control_enabled: false
+    require_both_hands: true
+    state_timeout_s: 0.5
+    command_timeout_s: 0.35
+    publish_rate_hz: 50.0
+    max_velocity_rad_s: 0.5
+    kp: 0.5
+    kd: 0.1

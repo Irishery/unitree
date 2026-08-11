@@ -1,0 +1,20 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>g1_mujoco</name>
+  <version>0.1.0</version>
+  <description>MuJoCo contact-physics simulation adapter for Unitree G1 DEX3-1.</description>
+  <maintainer email="maintainer@example.com">G1 ROS 2 team</maintainer>
+  <license>BSD-3-Clause</license>
+  <buildtool_depend>ament_python</buildtool_depend>
+  <depend>rclpy</depend>
+  <depend>ament_index_python</depend>
+  <depend>launch</depend>
+  <depend>launch_ros</depend>
+  <depend>robot_state_publisher</depend>
+  <depend>rviz2</depend>
+  <depend>sensor_msgs</depend>
+  <depend>sensor_msgs_py</depend>
+  <depend>std_msgs</depend>
+  <depend>tf2_ros</depend>
+  <export><build_type>ament_python</build_type></export>
+</package>

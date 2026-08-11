@@ -19,8 +19,8 @@ COPY vendor/g1_description /opt/unitree_ros/robots/g1_description
 WORKDIR /ws
 COPY src/g1_gazebo /ws/src/g1_gazebo
 RUN python3 /ws/src/g1_gazebo/scripts/prepare_urdf.py \
-      /opt/unitree_ros/robots/g1_description/g1_29dof_rev_1_0.urdf \
-      /opt/unitree_ros/robots/g1_description/g1_29dof_gazebo.urdf \
+      /opt/unitree_ros/robots/g1_description/g1_29dof_with_hand_rev_1_0.urdf \
+      /opt/unitree_ros/robots/g1_description/g1_29dof_with_dex3_gazebo.urdf \
     && . /opt/ros/jazzy/setup.sh \
     && colcon build --symlink-install --packages-select g1_gazebo
 

@@ -22,6 +22,12 @@ def generate_launch_description():
                 output="screen",
                 parameters=[LaunchConfiguration("config")],
             ),
+            Node(
+                package="g1_bridge",
+                executable="dex3_bridge_node",
+                name="dex3_bridge",
+                output="screen",
+                parameters=[LaunchConfiguration("config")],
+            ),
         ]
     )
-

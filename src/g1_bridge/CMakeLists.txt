@@ -28,8 +28,18 @@ ament_target_dependencies(g1_bridge_node
   unitree_hg
 )
 
-install(TARGETS g1_bridge_node DESTINATION lib/${PROJECT_NAME})
+add_executable(dex3_bridge_node src/dex3_bridge_node.cpp)
+target_compile_features(dex3_bridge_node PUBLIC cxx_std_17)
+ament_target_dependencies(dex3_bridge_node
+  diagnostic_msgs
+  rclcpp
+  sensor_msgs
+  std_msgs
+  std_srvs
+  unitree_hg
+)
+
+install(TARGETS g1_bridge_node dex3_bridge_node DESTINATION lib/${PROJECT_NAME})
 install(DIRECTORY config launch DESTINATION share/${PROJECT_NAME})
 
 ament_package()
-

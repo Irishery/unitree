@@ -20,13 +20,15 @@ Bridge предполагается запускать на вычислител
 - ограничение скоростей, watchdog команд и watchdog телеметрии;
 - launch/config, DDS network setup и smoke test;
 - фиксированная версия официальных Unitree ROS 2 messages (`v0.3.0`).
+- реальное управление двумя кистями DEX3-1 через официальный DDS-интерфейс,
+  с отдельным enable, ограничениями, watchdog состояния/команд и stop-service.
 
 Контракт топиков описан в [docs/TOPICS.md](docs/TOPICS.md), физическая проверка — в [docs/SAFETY.md](docs/SAFETY.md).
 
 ## Gazebo на ноутбуке
 
 Для ROS 2 Jazzy + Gazebo Harmonic подготовлен отдельный Docker-стенд с
-официальной моделью G1 29 DoF:
+официальной моделью G1 29 DoF и двумя артикулированными кистями DEX3-1:
 
 ```bash
 ./scripts/sim_build.sh
@@ -42,13 +44,32 @@ Bridge предполагается запускать на вычислител
 Стенд открывает Gazebo вместе с RViz, публикует состояние G1, RGB/depth,
 point cloud и IMU виртуальной RealSense D435i, а также принимает `/cmd_vel`.
 В сцене также есть автоматическая демонстрация perception-to-motion: стол,
-коробка, depth-сегментация, двуручные grasp targets, численный IK и виртуальный
-захват. В RViz добавлены маркеры распознанной коробки, целевых точек ладоней и
+коробка, depth-сегментация, двуручные grasp targets, численный IK и движение
+14 суставов DEX3-1. В RViz добавлены маркеры распознанной коробки, целевых точек ладоней и
 траектории; демо можно запускать вручную через `/g1/task/start`. Ограничения описаны в
 [docs/SIMULATION.md](docs/SIMULATION.md#демонстрация-стол--коробка--взять-в-руку).
 Это кинематическая проверка ROS/GUI-контура, не физически достоверная ходьба.
 Подробности, headless-режим и launch для физической D435i — в
 [docs/SIMULATION.md](docs/SIMULATION.md).
+
+## MuJoCo: физический DEX3 grasp
+
+Для проверки удержания предмета без виртуального attach используется отдельный
+MuJoCo-стенд. Он запускает официальный MJCF G1 29 DoF с DEX3-1, свободную
+динамическую коробку, контактные геометрии и friction. Тело G1 имеет
+фиксированное основание и gravity compensation только для проверки кистей;
+**коробка не закрепляется**.
+
+```bash
+./scripts/mujoco_build.sh
+./scripts/mujoco_up.sh
+```
+
+Управление отдельными суставами идёт через
+`/g1/mujoco/joints/<joint>/command`; команды физических кистей
+`/g1/dex3/{left,right}/command` также принимаются напрямую. Индикаторы
+`/g1/mujoco/hand_box_contacts` и `/g1/mujoco/physical_grasp` сообщают только
+о реальных контактах MuJoCo с коробкой — они не создают constraint или attach.
 
 ## 1. Подготовка робота (Ubuntu 22.04 / Humble)
 
@@ -105,6 +126,37 @@ ros2 topic echo /g1/imu/data --once
 ros2 topic echo /g1/joint_states --once
 ```
 
+Для G1 с DEX3-1 сначала проверить обратную связь обеих физических кистей:
+
+```bash
+ros2 topic echo /g1/dex3/left/joint_states --once
+ros2 topic echo /g1/dex3/right/joint_states --once
+```
+
+Освободить пальцы от предметов и только затем разрешить управление кистями:
+
+```bash
+ros2 service call /g1/dex3/enable_control std_srvs/srv/SetBool "{data: true}"
+```
+
+Команда содержит ровно семь положений моторов в радианах и должна поступать
+непрерывно. Пример малой тестовой цели для левой кисти:
+
+```bash
+ros2 topic pub -r 10 /g1/dex3/left/command sensor_msgs/msg/JointState \
+  "{position: [0.0, 0.0, 0.1, -0.1, -0.1, -0.1, -0.1]}"
+```
+
+Немедленно снять программное управление обеими кистями:
+
+```bash
+ros2 service call /g1/dex3/stop std_srvs/srv/Trigger "{}"
+```
+
+Реальные DEX3-топики, пределы и watchdog описаны в
+[docs/TOPICS.md](docs/TOPICS.md#real-dex3-1-hands). Не запускайте параллельно
+официальный `g1_dex3_example` или другой publisher команд кистей.
+
 Если `/lowstate` отсутствует, сначала исправить DDS/interface/domain. Управление при этом включить невозможно.
 
 ## 4. GUI и teleop на ноутбуке
@@ -151,7 +203,7 @@ ros2 service call /g1/enable_control std_srvs/srv/SetBool "{data: false}"
 ## Ограничения первой версии
 
 - `/odom` не синтезируется из команды: это была бы не измеренная одометрия. Его добавим после проверки фактического high-level state topic на вашей прошивке.
-- Для Gazebo включён официальный URDF/mesh-набор G1 29 DoF; перед реальным запуском всё равно надо сверить точную комплектацию робота.
+- Для Gazebo включён официальный URDF/mesh-набор G1 29 DoF с DEX3-1; перед реальным запуском всё равно надо сверить точную комплектацию робота.
 - Для D435i добавлен отдельный hardware launch; остальные native камеры и LiDAR
   потребуют инвентаризации топиков на конкретной комплектации робота.
 

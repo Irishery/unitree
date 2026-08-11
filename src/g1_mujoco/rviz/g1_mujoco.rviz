@@ -1,0 +1,53 @@
+Panels:
+  - Class: rviz_common/Displays
+    Name: Displays
+Visualization Manager:
+  Class: ""
+  Displays:
+    - Class: rviz_default_plugins/RobotModel
+      Alpha: 1
+      Enabled: true
+      Name: G1 DEX3
+      Description Source: Topic
+      Description Topic:
+        Value: /robot_description
+      TF Prefix: ""
+      Update Interval: 0
+      Visual Enabled: true
+      Collision Enabled: true
+      Value: true
+    - Class: rviz_default_plugins/PointCloud2
+      Enabled: false
+      Name: D435i Point Cloud
+      Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /camera/camera/depth/color/points
+      Size (m): 0.008
+      Style: Points
+      Value: false
+    - Class: rviz_default_plugins/Image
+      Enabled: true
+      Normalize Range: false
+      Name: D435i RGB
+      Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /camera/camera/color/image_raw
+      Value: true
+  Global Options:
+    Fixed Frame: pelvis
+  Views:
+    Current:
+      Class: rviz_default_plugins/Orbit
+      Distance: 2.5
+      Focal Point:
+        X: 0
+        Y: 0
+        Z: 0.8
+      Pitch: 0.45
+      Yaw: 0.78

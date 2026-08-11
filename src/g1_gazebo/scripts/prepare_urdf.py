@@ -39,6 +39,20 @@ CONTROLLED_JOINTS = (
     "right_wrist_roll_joint",
     "right_wrist_pitch_joint",
     "right_wrist_yaw_joint",
+    "left_hand_thumb_0_joint",
+    "left_hand_thumb_1_joint",
+    "left_hand_thumb_2_joint",
+    "left_hand_middle_0_joint",
+    "left_hand_middle_1_joint",
+    "left_hand_index_0_joint",
+    "left_hand_index_1_joint",
+    "right_hand_thumb_0_joint",
+    "right_hand_thumb_1_joint",
+    "right_hand_thumb_2_joint",
+    "right_hand_middle_0_joint",
+    "right_hand_middle_1_joint",
+    "right_hand_index_0_joint",
+    "right_hand_index_1_joint",
 )
 
 ARM_POSITION_CONTROLLERS = "\n".join(
@@ -75,12 +89,11 @@ MODEL_PLUGINS = f"""
       <topic>/model/g1/pose</topic>
     </plugin>
 {ARM_POSITION_CONTROLLERS}
-    <!-- The G1 29 DoF description has no finger joints.  For the tabletop
-         demo, this fixed joint is an explicit virtual-grasp abstraction. -->
+    <!-- DEX3 fingers are articulated and commanded in the demo. The
+         detachable joint only approximates stable object contact. -->
     <plugin filename="gz-sim-detachable-joint-system"
             name="gz::sim::systems::DetachableJoint">
-      <!-- Gazebo lumps URDF fixed joints, making the rubber-hand mesh part
-           of this final movable wrist link. -->
+      <!-- Gazebo collapses the fixed palm joint into the wrist link. -->
       <parent_link>right_wrist_yaw_link</parent_link>
       <child_model>pickup_box</child_model>
       <child_link>link</child_link>

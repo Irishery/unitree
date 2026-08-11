@@ -62,6 +62,20 @@ enum JointIndex : std::size_t
   kRightWristRoll,
   kRightWristPitch,
   kRightWristYaw,
+  kLeftHandThumb0,
+  kLeftHandThumb1,
+  kLeftHandThumb2,
+  kLeftHandMiddle0,
+  kLeftHandMiddle1,
+  kLeftHandIndex0,
+  kLeftHandIndex1,
+  kRightHandThumb0,
+  kRightHandThumb1,
+  kRightHandThumb2,
+  kRightHandMiddle0,
+  kRightHandMiddle1,
+  kRightHandIndex0,
+  kRightHandIndex1,
   kJointCount
 };
 
@@ -74,6 +88,11 @@ const std::array<const char *, kJointCount> kJointNames{{
   "left_wrist_yaw_joint", "right_shoulder_pitch_joint", "right_shoulder_roll_joint",
   "right_shoulder_yaw_joint", "right_elbow_joint", "right_wrist_roll_joint",
   "right_wrist_pitch_joint", "right_wrist_yaw_joint",
+  "left_hand_thumb_0_joint", "left_hand_thumb_1_joint", "left_hand_thumb_2_joint",
+  "left_hand_middle_0_joint", "left_hand_middle_1_joint", "left_hand_index_0_joint",
+  "left_hand_index_1_joint", "right_hand_thumb_0_joint", "right_hand_thumb_1_joint",
+  "right_hand_thumb_2_joint", "right_hand_middle_0_joint", "right_hand_middle_1_joint",
+  "right_hand_index_0_joint", "right_hand_index_1_joint",
 }};
 
 const Pose kDownPose{};
@@ -82,12 +101,16 @@ const std::array<double, kJointCount> kLowerLimits{{
   -2.618, -0.52, -0.52,
   -3.0892, -1.5882, -2.618, -1.0472, -1.972222054, -1.614429558, -1.614429558,
   -3.0892, -2.2515, -2.618, -1.0472, -1.972222054, -1.614429558, -1.614429558,
+  -1.04719755, -0.61086523, 0.0, -1.57079632, -1.74532925, -1.57079632, -1.74532925,
+  -1.04719755, -1.04719755, -1.74532925, 0.0, 0.0, 0.0, 0.0,
 }};
 
 const std::array<double, kJointCount> kUpperLimits{{
   2.618, 0.52, 0.52,
   2.6704, 2.2515, 2.618, 2.0944, 1.972222054, 1.614429558, 1.614429558,
   2.6704, 1.5882, 2.618, 2.0944, 1.972222054, 1.614429558, 1.614429558,
+  1.04719755, 1.04719755, 1.74532925, 0.0, 0.0, 0.0, 0.0,
+  1.04719755, 0.78539816, 0.0, 1.57079632, 1.74532925, 1.57079632, 1.74532925,
 }};
 
 Vec3 operator+(const Vec3 & a, const Vec3 & b)
@@ -391,6 +414,24 @@ Pose interpolate(const Pose & from, const Pose & to, const double alpha)
   }
   return result;
 }
+
+void close_dex3_hands(Pose & pose)
+{
+  pose[kLeftHandThumb0] = 0.0;
+  pose[kLeftHandThumb1] = 0.20;
+  pose[kLeftHandThumb2] = 0.80;
+  pose[kLeftHandMiddle0] = -0.80;
+  pose[kLeftHandMiddle1] = -0.80;
+  pose[kLeftHandIndex0] = -0.80;
+  pose[kLeftHandIndex1] = -0.80;
+  pose[kRightHandThumb0] = 0.0;
+  pose[kRightHandThumb1] = -0.20;
+  pose[kRightHandThumb2] = -0.80;
+  pose[kRightHandMiddle0] = 0.80;
+  pose[kRightHandMiddle1] = 0.80;
+  pose[kRightHandIndex0] = 0.80;
+  pose[kRightHandIndex1] = 0.80;
+}
 }  // namespace
 
 class TabletopPickDemo final : public rclcpp::Node
@@ -590,7 +631,8 @@ private:
     double right_error = 0.0;
     const Pose pre = solve_bimanual_pose(left_pre, right_pre, kDownPose, &left_error, &right_error);
     max_ik_error_ = std::max(left_error, right_error);
-    const Pose grasp = solve_bimanual_pose(left_grasp, right_grasp, pre, &left_error, &right_error);
+    Pose grasp = solve_bimanual_pose(left_grasp, right_grasp, pre, &left_error, &right_error);
+    close_dex3_hands(grasp);
     max_ik_error_ = std::max(max_ik_error_, std::max(left_error, right_error));
     const Pose lift = solve_bimanual_pose(left_lift, right_lift, grasp, &left_error, &right_error);
     max_ik_error_ = std::max(max_ik_error_, std::max(left_error, right_error));
@@ -799,7 +841,7 @@ private:
       if (!attach_sent_) {
         attach_pub_->publish(std_msgs::msg::Empty{});
         attach_sent_ = true;
-        publish_status("BIMANUAL_GRASP: virtual attachment created; lifting box");
+        publish_status("BIMANUAL_GRASP: DEX3 fingers closed; contact constraint created");
       }
       publish_pose(interpolate(plan_[2], plan_[3], (elapsed - 5.0) / 3.0));
     } else {
