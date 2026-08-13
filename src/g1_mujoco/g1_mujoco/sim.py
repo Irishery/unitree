@@ -25,24 +25,38 @@ HAND_JOINTS = {
 }
 
 # Visual "arms at sides" rest pose.  The official MJCF's elbow link has a
-# mechanical offset: shoulder axes at zero plus elbow=1.50 rad puts both the
-# upper arm and forearm vertically beside the torso.  Elbow=0 instead projects
-# the forearm forward, despite sounding like the intuitive straight position.
+# mechanical offset, so elbow=0 projects the forearm forward.  The previous
+# vertical arm pose is retained; only a small symmetric shoulder roll moves
+# the arms outside the torso and thighs in the visual model.
 ARMS_AT_SIDES = {
     "left_shoulder_pitch_joint": 0.0,
-    "left_shoulder_roll_joint": 0.0,
+    "left_shoulder_roll_joint": 0.25,
     "left_shoulder_yaw_joint": 0.0,
     "left_elbow_joint": 1.50,
     "left_wrist_roll_joint": 0.0,
     "left_wrist_pitch_joint": 0.0,
     "left_wrist_yaw_joint": 0.0,
+    "left_hand_thumb_0_joint": 0.0,
+    "left_hand_thumb_1_joint": 0.25,
+    "left_hand_thumb_2_joint": 0.45,
+    "left_hand_middle_0_joint": -0.55,
+    "left_hand_middle_1_joint": -0.70,
+    "left_hand_index_0_joint": -0.55,
+    "left_hand_index_1_joint": -0.70,
     "right_shoulder_pitch_joint": 0.0,
-    "right_shoulder_roll_joint": 0.0,
+    "right_shoulder_roll_joint": -0.25,
     "right_shoulder_yaw_joint": 0.0,
     "right_elbow_joint": 1.50,
     "right_wrist_roll_joint": 0.0,
     "right_wrist_pitch_joint": 0.0,
     "right_wrist_yaw_joint": 0.0,
+    "right_hand_thumb_0_joint": 0.0,
+    "right_hand_thumb_1_joint": -0.25,
+    "right_hand_thumb_2_joint": -0.45,
+    "right_hand_middle_0_joint": 0.55,
+    "right_hand_middle_1_joint": 0.70,
+    "right_hand_index_0_joint": 0.55,
+    "right_hand_index_1_joint": 0.70,
 }
 
 

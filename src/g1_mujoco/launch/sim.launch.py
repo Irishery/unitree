@@ -51,6 +51,18 @@ def generate_launch_description():
             output="screen",
         ),
         Node(
+            package="g1_mujoco",
+            executable="box_detector",
+            name="g1_box_detector",
+            output="screen",
+        ),
+        Node(
+            package="g1_mujoco",
+            executable="pick_controller",
+            name="g1_pick_controller",
+            output="screen",
+        ),
+        Node(
             package="rviz2",
             executable="rviz2",
             arguments=["-d", str(package_share / "rviz" / "g1_mujoco.rviz")],

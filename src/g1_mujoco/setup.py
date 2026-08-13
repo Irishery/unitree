@@ -15,5 +15,11 @@ setup(
     ],
     install_requires=["setuptools"],
     zip_safe=True,
-    entry_points={"console_scripts": ["sim = g1_mujoco.sim:main"]},
+    entry_points={"console_scripts": [
+        "sim = g1_mujoco.sim:main",
+        "box_detector = g1_mujoco.box_detector:main",
+        "pick_controller = g1_mujoco.pick_controller:main",
+        "train_rl = g1_mujoco.train_rl:main",
+        "evaluate_rl = g1_mujoco.evaluate_rl:main",
+    ]},
 )
