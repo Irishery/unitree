@@ -9,7 +9,8 @@ setup(
     data_files=[
         ("share/ament_index/resource_index/packages", ["resource/g1_mujoco"]),
         ("share/g1_mujoco", ["package.xml"]),
-        ("share/g1_mujoco/launch", ["launch/sim.launch.py"]),
+        ("share/g1_mujoco/config", ["config/slam_toolbox.yaml"]),
+        ("share/g1_mujoco/launch", ["launch/sim.launch.py", "launch/navigation.launch.py"]),
         ("share/g1_mujoco/rviz", ["rviz/g1_mujoco.rviz"]),
         ("share/g1_mujoco/scripts", ["scripts/prepare_mjcf.py"]),
     ],

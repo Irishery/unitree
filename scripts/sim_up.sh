@@ -2,10 +2,15 @@
 set -euo pipefail
 
 mode="${1:-gui}"
+if [[ $# -gt 0 ]]; then
+  shift
+fi
+launch_args=("$@")
+
 if [[ "${mode}" == "headless" ]]; then
   exec docker run --rm --name unitree-g1-gazebo --network host \
     unitree-g1-gazebo:jazzy \
-    ros2 launch g1_gazebo sim.launch.py headless:=true rviz:=false
+    ros2 launch g1_gazebo sim.launch.py headless:=true rviz:=false "${launch_args[@]}"
 fi
 
 xhost +si:localuser:root >/dev/null
@@ -20,4 +25,4 @@ docker run --rm --name unitree-g1-gazebo --network host \
   -e LIBGL_ALWAYS_SOFTWARE=1 \
   -v /tmp/.X11-unix:/tmp/.X11-unix:rw \
   unitree-g1-gazebo:jazzy \
-  ros2 launch g1_gazebo sim.launch.py headless:=false rviz:=true
+  ros2 launch g1_gazebo sim.launch.py headless:=false rviz:=true "${launch_args[@]}"

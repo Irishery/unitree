@@ -3,8 +3,10 @@ from pathlib import Path
 
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
+from launch.actions import IncludeLaunchDescription
 from launch.actions import DeclareLaunchArgument
 from launch.conditions import IfCondition
+from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 
@@ -13,6 +15,10 @@ def generate_launch_description():
     package_share = Path(get_package_share_directory("g1_mujoco"))
     description_dir = Path(os.environ.get("G1_DESCRIPTION_DIR", "/opt/unitree_ros/robots/g1_description"))
     robot_description = (description_dir / "g1_29dof_with_hand_rev_1_0.urdf").read_text(encoding="utf-8")
+    navigation = LaunchConfiguration("navigation")
+    publish_camera = LaunchConfiguration("publish_camera")
+    slam = LaunchConfiguration("slam")
+    tabletop_pick = LaunchConfiguration("tabletop_pick")
     # RViz resolves package:// resources through the ament index more reliably
     # than a bind-mounted file URI.  The image build installs these meshes in
     # g1_mujoco's share directory.
@@ -25,12 +31,20 @@ def generate_launch_description():
     return LaunchDescription([
         DeclareLaunchArgument("viewer", default_value="true"),
         DeclareLaunchArgument("rviz", default_value="true"),
+        DeclareLaunchArgument("publish_camera", default_value="true"),
+        DeclareLaunchArgument("navigation", default_value="true"),
+        DeclareLaunchArgument("slam", default_value="true"),
+        DeclareLaunchArgument("tabletop_pick", default_value="false"),
         Node(
             package="g1_mujoco",
             executable="sim",
             name="g1_mujoco",
             output="screen",
-            parameters=[{"viewer": LaunchConfiguration("viewer")}],
+            parameters=[{
+                "viewer": LaunchConfiguration("viewer"),
+                "publish_camera": publish_camera,
+                "tabletop_pick": tabletop_pick,
+            }],
         ),
         Node(
             package="robot_state_publisher",
@@ -50,17 +64,35 @@ def generate_launch_description():
             ],
             output="screen",
         ),
+        # The stock Mid-360 is mounted upside down in the vendor description.
+        # This level child frame matches the 2D /scan frame used by SLAM/Nav2.
+        Node(
+            package="tf2_ros",
+            executable="static_transform_publisher",
+            arguments=[
+                "0", "0", "0", "3.141592653589793", "0.05112069379091391", "0",
+                "mid360_link", "mid360_scan",
+            ],
+            output="screen",
+        ),
         Node(
             package="g1_mujoco",
             executable="box_detector",
             name="g1_box_detector",
+            condition=IfCondition(tabletop_pick),
             output="screen",
         ),
         Node(
             package="g1_mujoco",
             executable="pick_controller",
             name="g1_pick_controller",
+            condition=IfCondition(tabletop_pick),
             output="screen",
+        ),
+        IncludeLaunchDescription(
+            PythonLaunchDescriptionSource(str(package_share / "launch" / "navigation.launch.py")),
+            launch_arguments={"use_sim_time": "false", "autostart": "true", "slam": slam}.items(),
+            condition=IfCondition(navigation),
         ),
         Node(
             package="rviz2",

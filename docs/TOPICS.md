@@ -31,6 +31,23 @@ Only `linear.x`, `linear.y`, and `angular.z` are used from `/cmd_vel`. Each valu
 
 The bridge uses Unitree high-level locomotion API `7105`; it never publishes `lowcmd` and never takes direct torque control of a motor.
 
+## Simulation navigation
+
+These interfaces belong to the Gazebo and MuJoCo simulation stands, not to the
+physical G1 bridge:
+
+| Name | Type | Meaning |
+|---|---|---|
+| `/scan` | `sensor_msgs/msg/LaserScan` | Level 2D projection of the stock Mid-360 mounting position |
+| `/odom` | `nav_msgs/msg/Odometry` | Simulation odometry, frames `odom` and `pelvis`; Gazebo measures model motion, MuJoCo currently publishes a kinematic base |
+| `/map` | `nav_msgs/msg/OccupancyGrid` | Online map from SLAM Toolbox |
+| `/plan` | `nav_msgs/msg/Path` | Current Nav2 global plan |
+| `/cmd_vel` | `geometry_msgs/msg/Twist` | Final Nav2/collision-monitor velocity command to the active simulator |
+
+The physical Mid-360 and physical odometry need hardware-specific drivers and
+must not be replaced with these simulation sources. In MuJoCo, `/cmd_vel` is a
+navigation-interface test path rather than a dynamic walking controller.
+
 ## Real DEX3-1 hands
 
 `dex3_bridge_node` is separate from locomotion and starts disarmed.

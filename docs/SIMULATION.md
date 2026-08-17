@@ -163,6 +163,54 @@ safety-проверки. Для реальных DEX3 предусмотрен �
 Unitree Isaac Lab / MuJoCo policy. Такой контроллер нельзя считать эквивалентом
 high-level `ai_sport` API реального робота без отдельной валидации.
 
+## Mid-360, SLAM Toolbox и Nav2
+
+Gazebo-модель использует штатное крепление `mid360_link` из официального URDF
+G1. Для 2D-навигации добавлен выровненный дочерний frame `mid360_scan` и
+горизонтальный GPU LiDAR со следующими ROS-интерфейсами:
+
+- `/scan` (`sensor_msgs/msg/LaserScan`, 360°, 15 Hz, 0.15–30 m);
+- `/odom` (`nav_msgs/msg/Odometry`, `odom -> pelvis`, 50 Hz);
+- `/tf`: измеренный Gazebo transform `odom -> pelvis`;
+- `/map`: карта SLAM Toolbox и transform `map -> odom`.
+
+`sim.launch.py` по умолчанию запускает SLAM Toolbox и Nav2. Полная TF-цепочка:
+
+```text
+map -> odom -> pelvis -> torso_link -> mid360_link -> mid360_scan
+```
+
+Запуск без GUI:
+
+```bash
+./scripts/sim_up.sh headless pick_auto_start:=false
+```
+
+Проверка данных из другого терминала:
+
+```bash
+docker exec unitree-g1-gazebo bash -lc \
+  'source /opt/ros/jazzy/setup.bash && source /ws/install/setup.bash && ros2 topic echo /scan --once'
+docker exec unitree-g1-gazebo bash -lc \
+  'source /opt/ros/jazzy/setup.bash && source /ws/install/setup.bash && ros2 topic echo /map --once'
+docker exec unitree-g1-gazebo bash -lc \
+  'source /opt/ros/jazzy/setup.bash && source /ws/install/setup.bash && ros2 lifecycle get /planner_server'
+```
+
+В GUI цель задаётся инструментом `Nav2 Goal`. Сохранить построенную карту:
+
+```bash
+docker exec unitree-g1-gazebo bash -lc \
+  'source /opt/ros/jazzy/setup.bash && source /ws/install/setup.bash && ros2 run nav2_map_server map_saver_cli -f /tmp/g1_map'
+```
+
+Симуляционный `/odom` вычисляется Gazebo из фактической позы модели, а не
+интегрируется из команды `/cmd_vel`. На физическом G1 этот источник применять
+нельзя: Nav2 следует подключать только после проверки реальной одометрии и TF
+конкретной прошивки. Физический Livox Mid-360 также публикует 3D point cloud
+через свой драйвер; `/scan` в этом стенде — специально подготовленное 2D
+представление для SLAM Toolbox/Nav2, а не эмуляция полного паттерна Livox.
+
 ## Физическая RealSense D435i
 
 На компьютере, к которому камера подключена по USB 3, установить официальный

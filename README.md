@@ -42,7 +42,10 @@ Bridge предполагается запускать на вычислител
 ```
 
 Стенд открывает Gazebo вместе с RViz, публикует состояние G1, RGB/depth,
-point cloud и IMU виртуальной RealSense D435i, а также принимает `/cmd_vel`.
+point cloud и IMU виртуальной RealSense D435i, штатный Livox Mid-360 как
+горизонтальный `/scan`, измеренную `/odom`, а также принимает `/cmd_vel`.
+SLAM Toolbox и Nav2 запускаются по умолчанию: в RViz отображаются карта,
+costmap и инструмент `Nav2 Goal`.
 В сцене также есть автоматическая демонстрация perception-to-motion: стол,
 коробка, depth-сегментация, двуручные grasp targets, численный IK и движение
 14 суставов DEX3-1. В RViz добавлены маркеры распознанной коробки, целевых точек ладоней и
@@ -52,17 +55,36 @@ point cloud и IMU виртуальной RealSense D435i, а также при�
 Подробности, headless-режим и launch для физической D435i — в
 [docs/SIMULATION.md](docs/SIMULATION.md).
 
+Навигацию или SLAM можно отключить для изолированных тестов:
+
+```bash
+./scripts/sim_up.sh headless navigation:=false
+./scripts/sim_up.sh headless slam:=false
+```
+
 ## MuJoCo: физический DEX3 grasp
 
-Для проверки удержания предмета без виртуального attach используется отдельный
-MuJoCo-стенд. Он запускает официальный MJCF G1 29 DoF с DEX3-1, свободную
-динамическую коробку, контактные геометрии и friction. Тело G1 имеет
-фиксированное основание и gravity compensation только для проверки кистей;
-**коробка не закрепляется**.
+MuJoCo сейчас используется как навигационный стенд A → B: SLAM Toolbox, Nav2,
+`/scan`, `/odom` и RViz запускаются по умолчанию, а распознавание/захват коробки
+отключены до явного `tabletop_pick:=true`. Сцена всё ещё содержит официальный
+MJCF G1 29 DoF с DEX3-1, стол и свободную коробку, чтобы можно было вернуться к
+контактному grasp без пересборки архитектуры.
 
 ```bash
 ./scripts/mujoco_build.sh
 ./scripts/mujoco_up.sh
+```
+
+Задать точку B в уже запущенном контейнере:
+
+```bash
+./scripts/mujoco_nav_goal.sh 1.0 0.0
+```
+
+Подробный поток Nav2 feedback включается отдельно:
+
+```bash
+./scripts/mujoco_nav_goal.sh --feedback 1.0 0.0
 ```
 
 Управление отдельными суставами идёт через
@@ -70,6 +92,11 @@ MuJoCo-стенд. Он запускает официальный MJCF G1 29 DoF
 `/g1/dex3/{left,right}/command` также принимаются напрямую. Индикаторы
 `/g1/mujoco/hand_box_contacts` и `/g1/mujoco/physical_grasp` сообщают только
 о реальных контактах MuJoCo с коробкой — они не создают constraint или attach.
+
+MuJoCo-стенд также поднимает SLAM Toolbox, Nav2, `/scan`, `/odom` и RViz.
+Навигационная база в MuJoCo пока кинематическая (`/cmd_vel → odom/tf`), а не
+динамическая ходьба; это слой для проверки ROS2 GUI/SLAM/Nav2-контракта перед
+переносом на Gazebo или физический G1.
 
 ## 1. Подготовка робота (Ubuntu 22.04 / Humble)
 

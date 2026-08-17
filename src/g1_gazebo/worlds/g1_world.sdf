@@ -38,6 +38,23 @@
       </link>
     </model>
 
+    <!-- A bounded navigation area gives the planar Mid-360 scan stable
+         geometry in every direction and makes the generated SLAM map useful
+         immediately after startup. -->
+    <model name="navigation_walls">
+      <static>true</static>
+      <link name="link">
+        <visual name="north_visual"><pose>0 3 1.25 0 0 0</pose><geometry><box><size>6.1 0.1 2.5</size></box></geometry><material><ambient>0.75 0.75 0.72 1</ambient><diffuse>0.85 0.85 0.82 1</diffuse></material></visual>
+        <collision name="north_collision"><pose>0 3 1.25 0 0 0</pose><geometry><box><size>6.1 0.1 2.5</size></box></geometry></collision>
+        <visual name="south_visual"><pose>0 -3 1.25 0 0 0</pose><geometry><box><size>6.1 0.1 2.5</size></box></geometry><material><ambient>0.75 0.75 0.72 1</ambient><diffuse>0.85 0.85 0.82 1</diffuse></material></visual>
+        <collision name="south_collision"><pose>0 -3 1.25 0 0 0</pose><geometry><box><size>6.1 0.1 2.5</size></box></geometry></collision>
+        <visual name="east_visual"><pose>3 0 1.25 0 0 0</pose><geometry><box><size>0.1 6.1 2.5</size></box></geometry><material><ambient>0.75 0.75 0.72 1</ambient><diffuse>0.85 0.85 0.82 1</diffuse></material></visual>
+        <collision name="east_collision"><pose>3 0 1.25 0 0 0</pose><geometry><box><size>0.1 6.1 2.5</size></box></geometry></collision>
+        <visual name="west_visual"><pose>-3 0 1.25 0 0 0</pose><geometry><box><size>0.1 6.1 2.5</size></box></geometry><material><ambient>0.75 0.75 0.72 1</ambient><diffuse>0.85 0.85 0.82 1</diffuse></material></visual>
+        <collision name="west_collision"><pose>-3 0 1.25 0 0 0</pose><geometry><box><size>0.1 6.1 2.5</size></box></geometry></collision>
+      </link>
+    </model>
+
     <model name="table">
       <static>true</static>
       <link name="link">

@@ -5,6 +5,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     python3-colcon-common-extensions python3-pip python3-matplotlib \
     python3-pandas libgl1 libglfw3 assimp-utils \
     ros-jazzy-robot-state-publisher ros-jazzy-rviz2 ros-jazzy-sensor-msgs-py \
+    ros-jazzy-navigation2 ros-jazzy-nav2-bringup ros-jazzy-slam-toolbox \
     && rm -rf /var/lib/apt/lists/* \
     && pip3 install --break-system-packages --no-cache-dir \
       --index-url https://download.pytorch.org/whl/cpu torch==2.5.1+cpu \
@@ -18,6 +19,9 @@ COPY src/g1_mujoco /ws/src/g1_mujoco
 RUN python3 /ws/src/g1_mujoco/scripts/prepare_mjcf.py \
       /opt/unitree_ros/robots/g1_description/g1_29dof_with_hand_rev_1_0.xml \
       /opt/unitree_ros/robots/g1_description/g1_29dof_with_dex3_tabletop.xml \
+    && python3 /ws/src/g1_mujoco/scripts/prepare_mjcf.py --scene nav \
+      /opt/unitree_ros/robots/g1_description/g1_29dof_with_hand_rev_1_0.xml \
+      /opt/unitree_ros/robots/g1_description/g1_29dof_with_dex3_nav.xml \
     && . /opt/ros/jazzy/setup.sh \
     && cd /ws && colcon build --symlink-install --packages-select g1_mujoco \
     && for mesh in /opt/unitree_ros/robots/g1_description/meshes/*.STL; do \

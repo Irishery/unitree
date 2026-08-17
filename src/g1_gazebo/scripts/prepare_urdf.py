@@ -88,6 +88,15 @@ MODEL_PLUGINS = f"""
       <update_frequency>50</update_frequency>
       <topic>/model/g1/pose</topic>
     </plugin>
+    <plugin filename="gz-sim-odometry-publisher-system"
+            name="gz::sim::systems::OdometryPublisher">
+      <odom_frame>odom</odom_frame>
+      <robot_base_frame>pelvis</robot_base_frame>
+      <odom_publish_frequency>50</odom_publish_frequency>
+      <odom_topic>/model/g1/odometry</odom_topic>
+      <tf_topic>/model/g1/odometry_pose</tf_topic>
+      <dimensions>2</dimensions>
+    </plugin>
 {ARM_POSITION_CONTROLLERS}
     <!-- DEX3 fingers are articulated and commanded in the demo. The
          detachable joint only approximates stable object contact. -->
@@ -140,6 +149,38 @@ MODEL_PLUGINS = f"""
       <gz_frame_id>d435_link</gz_frame_id>
     </sensor>
   </gazebo>
+  <gazebo reference="mid360_scan">
+    <!-- A horizontal scan derived from the stock Livox Mid-360 mounting
+         position.  Nav2 and SLAM Toolbox consume this planar representation;
+         the physical sensor still requires its real PointCloud2 driver. -->
+    <sensor name="mid360_planar" type="gpu_lidar">
+      <always_on>true</always_on>
+      <visualize>true</visualize>
+      <update_rate>15</update_rate>
+      <topic>/model/g1/scan</topic>
+      <gz_frame_id>mid360_scan</gz_frame_id>
+      <lidar>
+        <scan>
+          <horizontal>
+            <samples>900</samples>
+            <resolution>1</resolution>
+            <min_angle>-3.141592653589793</min_angle>
+            <max_angle>3.141592653589793</max_angle>
+          </horizontal>
+        </scan>
+        <range>
+          <min>0.15</min>
+          <max>30.0</max>
+          <resolution>0.01</resolution>
+        </range>
+        <noise>
+          <type>gaussian</type>
+          <mean>0.0</mean>
+          <stddev>0.01</stddev>
+        </noise>
+      </lidar>
+    </sensor>
+  </gazebo>
 """
 
 
@@ -163,6 +204,19 @@ D435_DESCRIPTION = """
     <origin xyz="0 0 0" rpy="0 0 0" />
     <parent link="d435_color_optical_frame" />
     <child link="d435_imu_optical_frame" />
+  </joint>
+"""
+
+
+MID360_SCAN_DESCRIPTION = """
+  <!-- The stock Mid-360 frame follows the physical upside-down mounting.
+       This child cancels that fixed rotation and provides the level 2D scan
+       frame expected by SLAM Toolbox and Nav2. -->
+  <link name="mid360_scan" />
+  <joint name="mid360_scan_joint" type="fixed">
+    <origin xyz="0 0 0" rpy="3.141592653589793 0.05112069379091391 0" />
+    <parent link="mid360_link" />
+    <child link="mid360_scan" />
   </joint>
 """
 
@@ -193,6 +247,14 @@ def main() -> None:
     if "<!-- mid360 -->" not in text:
         raise RuntimeError("Could not locate the D435 insertion point in upstream URDF")
     text = text.replace("  <!-- mid360 -->", D435_DESCRIPTION + "\n  <!-- mid360 -->")
+    mid360_joint_end = "  </joint>\n\n  <!-- Arm -->"
+    if mid360_joint_end not in text:
+        raise RuntimeError("Could not locate the Mid-360 joint in upstream URDF")
+    text = text.replace(
+        mid360_joint_end,
+        "  </joint>\n" + MID360_SCAN_DESCRIPTION + "\n  <!-- Arm -->",
+        1,
+    )
     # The upstream description has inertias and collisions but no Gazebo joint
     # controllers. Disable link gravity for this kinematic GUI / bridge smoke
     # test, otherwise the humanoid immediately collapses under physics.

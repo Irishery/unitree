@@ -1,6 +1,8 @@
 # MuJoCo DEX3 contact grasp
 
-MuJoCo-стенд запускается отдельно от Gazebo:
+MuJoCo-стенд запускается отдельно от Gazebo. По умолчанию это сейчас
+навигационный стенд A → B: SLAM/Nav2/RViz включены, а распознавание и захват
+коробки не стартуют.
 
 ```bash
 ./scripts/mujoco_build.sh
@@ -8,7 +10,8 @@ MuJoCo-стенд запускается отдельно от Gazebo:
 ```
 
 По умолчанию вместе с окном MuJoCo запускается RViz. В нём отображаются модель
-G1 и облако точек от виртуальной грудной RGB-D камеры. Для камеры публикуются
+G1, `/scan`, карта, costmaps и Nav2 Goal. Виртуальная грудная RGB-D камера
+остаётся доступной для последующего tabletop-pick режима. Для камеры публикуются
 RealSense-совместимые топики:
 
 ```text
@@ -23,6 +26,109 @@ RealSense-совместимые топики:
 в передней части головы (`torso_link`) через TF. Это модель камеры 640×480 с
 углом обзора 69°; это виртуальный RGB-D сенсор, а не подключение физической
 D435.
+
+## SLAM and Nav2 in MuJoCo
+
+MuJoCo-стенд также поднимает штатный для G1 навигационный контур:
+
+```text
+mid360_scan -> /scan -> SLAM Toolbox -> /map -> Nav2 -> /cmd_vel -> /odom + /tf
+```
+
+По умолчанию для навигации загружается отдельная MuJoCo-сцена
+`g1_29dof_with_dex3_nav.xml`: стол в ней является препятствием для lidar/SLAM,
+но не стоит вплотную к роботу и не используется как физический tabletop-grasp
+контакт. Близкая сцена со столом и коробкой для захвата включается только через
+`tabletop_pick:=true`.
+
+По умолчанию `./scripts/mujoco_up.sh` запускает SLAM, Nav2 и RViz. В RViz
+используйте инструмент `Nav2 Goal`; отображаются `map`, `/scan`, global/local
+costmap и `/plan`.
+
+Для навигационной проверки с GUI на ноутбуке лучше сначала отключить RGB-D
+renderer, если камера не нужна в этом прогоне:
+
+```bash
+./scripts/mujoco_up.sh publish_camera:=false
+```
+
+MuJoCo viewer и RViz останутся включены, но D435i image/depth/points не будут
+рендериться каждый кадр. Это снижает задержки TF/scan, из-за которых Nav2 может
+сорвать цель под нагрузкой.
+
+Если RViz в Docker падает с `failed to create drawable` или `exit code -11`,
+оставьте только окно MuJoCo:
+
+```bash
+./scripts/mujoco_up.sh publish_camera:=false rviz:=false
+```
+
+Nav2/SLAM при этом продолжают работать, а цель можно отправлять тем же
+`./scripts/mujoco_nav_goal.sh X Y`.
+
+RViz можно запустить отдельным контейнером поверх уже работающего MuJoCo/Nav2:
+
+```bash
+./scripts/mujoco_rviz.sh
+```
+
+Для headless-проверки без окна MuJoCo, RViz и RGB-D renderer:
+
+```bash
+docker run --rm --name unitree-g1-mujoco --network host --ipc=host \
+  -e MUJOCO_GL=egl \
+  unitree-g1-mujoco:jazzy \
+  ros2 launch g1_mujoco sim.launch.py \
+    viewer:=false rviz:=false publish_camera:=false navigation:=true slam:=true tabletop_pick:=false
+```
+
+Отправить цель B в уже запущенный контейнер:
+
+```bash
+./scripts/mujoco_nav_goal.sh 1.0 0.0
+```
+
+Скрипт перед отправкой цели ждёт `controller_server`, `planner_server`, первый
+`/odom`, `/map`, `/scan`, `/local_costmap/costmap` и
+`/global_costmap/costmap`. Это важно: action server Nav2 может стать доступен
+раньше, чем SLAM успеет создать `map -> odom` и прогреть costmap, а ранняя цель
+в этот момент часто завершается `ABORTED`.
+
+Аргументы: `X Y [YAW_RAD]` в frame `map`. Например, `1.0 0.0` — проехать из
+текущей точки A примерно на метр вперёд. Если нужно видеть каждое сообщение
+Nav2 feedback с текущей позой и оставшейся дистанцией:
+
+```bash
+./scripts/mujoco_nav_goal.sh --feedback 1.0 0.0
+```
+
+Контракт навигации:
+
+```text
+/scan      sensor_msgs/msg/LaserScan    360° Mid-360-like scan, frame mid360_scan
+/odom      nav_msgs/msg/Odometry        odom -> pelvis
+/tf        tf2_msgs/msg/TFMessage       dynamic odom -> pelvis plus robot TF
+/map       nav_msgs/msg/OccupancyGrid   online SLAM map
+/plan      nav_msgs/msg/Path            Nav2 global plan
+/cmd_vel   geometry_msgs/msg/Twist      Nav2 velocity command
+```
+
+Важное ограничение: в MuJoCo `/cmd_vel` пока двигает базу кинематически в ROS
+TF/odom, а не включает динамическую ходьбу G1. Это сделано, чтобы отладить
+SLAM/Nav2/RViz и интерфейс управления на том же топик-контракте, что и Gazebo.
+Контактный tabletop grasp при этом остаётся физическим MuJoCo-стендом:
+коробка свободная, без `attach`/`weld`.
+
+Визуальная модель в окне MuJoCo тоже следует этой кинематической базе через
+`floating_base_joint`. Для Nav2 симулятор берёт скорость с `/cmd_vel_smoothed`
+после `velocity_smoother`; обычный `/cmd_vel` остаётся fallback для ручных
+команд, когда Nav2 не запущен.
+
+Чтобы явно вернуться к режиму распознавания и захвата коробки:
+
+```bash
+./scripts/mujoco_up.sh tabletop_pick:=true
+```
 
 Он использует официальный `g1_29dof_with_hand_rev_1_0.xml` Unitree и добавляет
 стол, свободную коробку массой 0.25 kg, gravity, collision и friction. В сцене

@@ -9,9 +9,12 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     git \
     python3-colcon-common-extensions \
     ros-jazzy-robot-state-publisher \
+    ros-jazzy-navigation2 \
+    ros-jazzy-nav2-bringup \
     ros-jazzy-ros-gz-bridge \
     ros-jazzy-ros-gz-sim \
     ros-jazzy-rviz2 \
+    ros-jazzy-slam-toolbox \
     ros-jazzy-teleop-twist-keyboard
 
 COPY vendor/g1_description /opt/unitree_ros/robots/g1_description

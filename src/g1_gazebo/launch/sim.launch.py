@@ -21,6 +21,8 @@ def generate_launch_description():
     headless = LaunchConfiguration("headless")
     rviz = LaunchConfiguration("rviz")
     pick_auto_start = LaunchConfiguration("pick_auto_start")
+    navigation = LaunchConfiguration("navigation")
+    slam = LaunchConfiguration("slam")
     robot_description = urdf_path.read_text(encoding="utf-8")
 
     gazebo_headless = IncludeLaunchDescription(
@@ -80,6 +82,12 @@ def generate_launch_description():
         output="screen",
     )
 
+    navigation_stack = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(str(package_share / "launch" / "navigation.launch.py")),
+        launch_arguments={"use_sim_time": "true", "autostart": "true", "slam": slam}.items(),
+        condition=IfCondition(navigation),
+    )
+
     rviz_node = Node(
         package="rviz2",
         executable="rviz2",
@@ -94,6 +102,8 @@ def generate_launch_description():
             DeclareLaunchArgument("headless", default_value="false"),
             DeclareLaunchArgument("rviz", default_value="true"),
             DeclareLaunchArgument("pick_auto_start", default_value="true"),
+            DeclareLaunchArgument("navigation", default_value="true"),
+            DeclareLaunchArgument("slam", default_value="true"),
             gazebo_headless,
             gazebo_gui,
             spawn,
@@ -101,6 +111,7 @@ def generate_launch_description():
             state_publisher,
             pointcloud_relay,
             tabletop_pick_demo,
+            navigation_stack,
             rviz_node,
         ]
     )

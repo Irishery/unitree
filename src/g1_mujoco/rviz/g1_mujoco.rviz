@@ -1,9 +1,15 @@
 Panels:
   - Class: rviz_common/Displays
     Name: Displays
+  - Class: nav2_rviz_plugins/Navigation 2
+    Name: Navigation 2
 Visualization Manager:
   Class: ""
   Displays:
+    - Class: rviz_default_plugins/Grid
+      Enabled: true
+      Name: Grid
+      Value: true
     - Class: rviz_default_plugins/RobotModel
       Alpha: 1
       Enabled: true
@@ -15,6 +21,59 @@ Visualization Manager:
       Update Interval: 0
       Visual Enabled: true
       Collision Enabled: true
+      Value: true
+    - Class: rviz_default_plugins/TF
+      Enabled: true
+      Name: TF
+      Show Axes: false
+      Show Names: false
+      Value: true
+    - Class: rviz_default_plugins/Map
+      Alpha: 0.7
+      Color Scheme: map
+      Draw Behind: true
+      Enabled: true
+      Name: SLAM Map
+      Topic:
+        Durability Policy: Transient Local
+        Reliability Policy: Reliable
+        Value: /map
+      Value: true
+    - Class: rviz_default_plugins/LaserScan
+      Enabled: true
+      Name: Mid-360 Scan
+      Size (Pixels): 3
+      Style: Points
+      Topic:
+        Reliability Policy: Best Effort
+        Value: /scan
+      Value: true
+    - Class: rviz_default_plugins/Map
+      Alpha: 0.3
+      Color Scheme: costmap
+      Enabled: true
+      Name: Global Costmap
+      Topic:
+        Durability Policy: Transient Local
+        Reliability Policy: Reliable
+        Value: /global_costmap/costmap
+      Value: true
+    - Class: rviz_default_plugins/Map
+      Alpha: 0.3
+      Color Scheme: costmap
+      Enabled: true
+      Name: Local Costmap
+      Topic:
+        Durability Policy: Transient Local
+        Reliability Policy: Reliable
+        Value: /local_costmap/costmap
+      Value: true
+    - Class: rviz_default_plugins/Path
+      Enabled: true
+      Name: Nav2 Plan
+      Topic:
+        Reliability Policy: Reliable
+        Value: /plan
       Value: true
     - Class: rviz_default_plugins/PointCloud2
       Enabled: false
@@ -49,14 +108,15 @@ Visualization Manager:
         Value: /camera/camera/color/image_raw
       Value: true
   Global Options:
-    Fixed Frame: pelvis
+    Fixed Frame: map
+  Tools:
+    - Class: rviz_default_plugins/MoveCamera
+    - Class: rviz_default_plugins/Select
+    - Class: rviz_default_plugins/FocusCamera
+    - Class: rviz_default_plugins/Measure
+    - Class: nav2_rviz_plugins/GoalTool
   Views:
     Current:
-      Class: rviz_default_plugins/Orbit
-      Distance: 2.5
-      Focal Point:
-        X: 0
-        Y: 0
-        Z: 0.8
-      Pitch: 0.45
-      Yaw: 0.78
+      Class: rviz_default_plugins/TopDownOrtho
+      Scale: 45
+      Target Frame: <Fixed Frame>
