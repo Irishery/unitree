@@ -3,7 +3,7 @@ FROM ros:jazzy-ros-base
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y --no-install-recommends \
     python3-colcon-common-extensions python3-pip python3-matplotlib \
-    python3-pandas libgl1 libglfw3 assimp-utils \
+    python3-pandas libgl1 libgl1-mesa-dri libglfw3 mesa-utils assimp-utils \
     ros-jazzy-robot-state-publisher ros-jazzy-rviz2 ros-jazzy-sensor-msgs-py \
     ros-jazzy-navigation2 ros-jazzy-nav2-bringup ros-jazzy-slam-toolbox \
     && rm -rf /var/lib/apt/lists/* \

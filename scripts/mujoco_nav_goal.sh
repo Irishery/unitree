@@ -2,15 +2,24 @@
 set -euo pipefail
 
 show_feedback=false
-if [[ "${1:-}" == "--feedback" ]]; then
-  show_feedback=true
-  shift
-fi
+args=()
+for arg in "$@"; do
+  case "${arg}" in
+    --feedback)
+      show_feedback=true
+      ;;
+    *)
+      args+=("${arg}")
+      ;;
+  esac
+done
+set -- "${args[@]}"
 
 if [[ $# -lt 2 || $# -gt 3 ]]; then
   echo "Usage: $0 [--feedback] X Y [YAW_RAD]" >&2
-  echo "Example: $0 1.0 0.0" >&2
-  echo "Example with full Nav2 feedback: $0 --feedback 1.0 0.0" >&2
+  echo "Example: $0 1.20 0.90" >&2
+  echo "Example with full Nav2 feedback: $0 --feedback 1.20 0.90" >&2
+  echo "Also accepted: $0 1.20 0.90 --feedback" >&2
   exit 2
 fi
 
@@ -32,6 +41,34 @@ yaw = float(sys.argv[1])
 print(math.sin(yaw * 0.5), math.cos(yaw * 0.5))
 PY
 )
+
+python3 - "$goal_x" "$goal_y" <<'PY'
+import sys
+
+x = float(sys.argv[1])
+y = float(sys.argv[2])
+
+table_center_x = 0.95
+table_half_length = 0.18
+table_half_width = 0.35
+base_radius = 0.26
+margin = 0.05
+inflate = base_radius + margin
+
+min_x = table_center_x - table_half_length - inflate
+max_x = table_center_x + table_half_length + inflate
+min_y = -table_half_width - inflate
+max_y = table_half_width + inflate
+
+if min_x <= x <= max_x and min_y <= y <= max_y:
+    print(
+        "Goal is inside the inflated nav table obstacle "
+        f"([{min_x:.2f}, {max_x:.2f}] x [{min_y:.2f}, {max_y:.2f}]).",
+        file=sys.stderr,
+    )
+    print("Use a goal beside/behind the table, for example: 1.20 0.90 or 1.20 -0.90", file=sys.stderr)
+    sys.exit(2)
+PY
 
 docker exec "${container_name}" bash -lc "
   source /opt/ros/jazzy/setup.bash

@@ -73,6 +73,9 @@ CMD_TIMEOUT = 0.5
 NAV_SCAN_GEOM_GROUP = 2
 MID360_TORSO_OFFSET = np.array([0.0002835, 0.00003, 0.428434], dtype=np.float64)
 MID360_VERTICAL_ANGLES = np.deg2rad(np.array([-60.0, -50.0, -40.0, -30.0, -20.0, -10.0, 0.0, 8.0]))
+NAV_BASE_COLLISION_RADIUS = 0.26
+NAV_BASE_COLLISION_MARGIN = 0.05
+NAV_SCAN_AABB_MARGIN = 0.03
 
 
 def yaw_to_quaternion(yaw):
@@ -89,10 +92,12 @@ class G1Mujoco(Node):
     def __init__(self):
         super().__init__("g1_mujoco")
         self.declare_parameter("viewer", True)
+        self.declare_parameter("viewer_lite", False)
         self.declare_parameter("tabletop_pick", False)
+        self.tabletop_pick = bool(self.get_parameter("tabletop_pick").value)
         scene_file = (
             "g1_29dof_with_dex3_tabletop.xml"
-            if self.get_parameter("tabletop_pick").value
+            if self.tabletop_pick
             else "g1_29dof_with_dex3_nav.xml"
         )
         description = Path(os.environ.get("G1_DESCRIPTION_DIR", "/opt/unitree_ros/robots/g1_description"))
@@ -132,7 +137,11 @@ class G1Mujoco(Node):
         self.odom_vy = 0.0
         self.odom_wz = 0.0
         self.last_cmd_time = self.get_clock().now()
+        self.last_final_cmd_time = None
         self.last_smoothed_cmd_time = None
+        self.last_nav_collision_log_time = 0.0
+        self.nav_blockers = self.build_nav_blockers() if not self.tabletop_pick else []
+        self.nav_scan_aabbs = self.build_nav_scan_aabbs() if not self.tabletop_pick else []
         self.declare_parameter("publish_camera", True)
         self.publisher = self.create_publisher(JointState, "/g1/joint_states", 10)
         self.contacts_pub = self.create_publisher(Int32, "/g1/mujoco/hand_box_contacts", 10)
@@ -145,11 +154,12 @@ class G1Mujoco(Node):
         self.depth_info_pub = self.create_publisher(CameraInfo, "/camera/camera/depth/camera_info", 10)
         self.points_pub = self.create_publisher(PointCloud2, "/camera/camera/depth/color/points", 10)
         self.tf_broadcaster = TransformBroadcaster(self)
+        # In Nav2 bringup the controller writes cmd_vel_nav, velocity_smoother
+        # writes /cmd_vel_smoothed, and collision_monitor writes the final
+        # /cmd_vel.  Prefer final /cmd_vel so obstacle-stop decisions are not
+        # bypassed; keep /cmd_vel_smoothed only as a fallback when the monitor
+        # is not running.
         self.create_subscription(Twist, "/cmd_vel", self.set_cmd_vel, 10)
-        # Nav2 bringup pipes controller output through velocity_smoother and
-        # then collision_monitor.  For this MuJoCo navigation bench the monitor
-        # is too conservative around the tabletop scene, so consume the
-        # smoothed command directly while keeping /cmd_vel as a manual fallback.
         self.create_subscription(Twist, "/cmd_vel_smoothed", self.set_smoothed_cmd_vel, 10)
         for name in self.names:
             self.create_subscription(Float64, f"/g1/mujoco/joints/{name}/command",
@@ -161,13 +171,29 @@ class G1Mujoco(Node):
         if self.get_parameter("viewer").value:
             from mujoco import viewer as mujoco_viewer
             self.viewer = mujoco_viewer.launch_passive(self.model, self.data)
+            if self.get_parameter("viewer_lite").value:
+                # Software-GL laptops render the textured G1 meshes slowly.
+                # Shadows and textures are by far the heaviest part of the
+                # viewer frame; dropping them keeps the physics view cheap.
+                # NOTE: no local "import mujoco" here - it would shadow the
+                # module-level import and crash __init__ with
+                # UnboundLocalError at the MjModel load above.
+                self.viewer.opt.flags[mujoco.mjtVisFlag.mjVIS_TEXTURE] = False
+                self.viewer.user_scn.flags[mujoco.mjtRndFlag.mjRND_SHADOW] = False
+                self.model.vis.quality.shadowsize = 0
         self.renderer = None
         if self.get_parameter("publish_camera").value:
             self.renderer = mujoco.Renderer(self.model, width=640, height=480)
         self.timer = self.create_timer(0.002, self.step)
         self.get_logger().info(
             "MuJoCo DEX3 contact simulation: no attach or weld is used for pickup_box; "
-            f"scene={scene_file}; Nav2 base motion is published kinematically on /odom and /tf")
+            f"scene={scene_file}; Nav2 base motion is published kinematically as "
+            "odom -> base_footprint, with base_footprint -> pelvis lifting the visual model")
+        if self.nav_blockers:
+            blocker_names = ", ".join(blocker["name"] for blocker in self.nav_blockers)
+            self.get_logger().info(
+                "MuJoCo nav safety guard active: base cannot enter inflated obstacles: "
+                f"{blocker_names}")
 
     def qpos(self, name):
         return float(self.data.qpos[self.model.jnt_qposadr[self.joint_ids[name]]])
@@ -188,18 +214,79 @@ class G1Mujoco(Node):
             self.set_target(name, value)
 
     def set_cmd_vel(self, message):
-        if self.last_smoothed_cmd_time is not None:
-            smoothed_age = (self.get_clock().now() - self.last_smoothed_cmd_time).nanoseconds * 1e-9
-            if smoothed_age < CMD_TIMEOUT:
-                return
         self.cmd_vel = message
-        self.last_cmd_time = self.get_clock().now()
+        now = self.get_clock().now()
+        self.last_cmd_time = now
+        self.last_final_cmd_time = now
 
     def set_smoothed_cmd_vel(self, message):
+        if self.last_final_cmd_time is not None:
+            final_age = (self.get_clock().now() - self.last_final_cmd_time).nanoseconds * 1e-9
+            if final_age < CMD_TIMEOUT:
+                return
         self.cmd_vel = message
         now = self.get_clock().now()
         self.last_cmd_time = now
         self.last_smoothed_cmd_time = now
+
+    def build_nav_blockers(self):
+        blockers = []
+        inflate = NAV_BASE_COLLISION_RADIUS + NAV_BASE_COLLISION_MARGIN
+        for geom_id in range(self.model.ngeom):
+            if int(self.model.geom_group[geom_id]) != NAV_SCAN_GEOM_GROUP:
+                continue
+            if self.model.geom_type[geom_id] != mujoco.mjtGeom.mjGEOM_BOX:
+                continue
+            name = mujoco.mj_id2name(self.model, mujoco.mjtObj.mjOBJ_GEOM, geom_id) or f"geom_{geom_id}"
+            if not (name == "table_top" or name == "pickup_box_geom" or name.startswith("nav_wall_")):
+                continue
+            center = self.data.geom_xpos[geom_id].copy()
+            size = self.model.geom_size[geom_id].copy()
+            blockers.append({
+                "name": name,
+                "min_x": float(center[0] - size[0] - inflate),
+                "max_x": float(center[0] + size[0] + inflate),
+                "min_y": float(center[1] - size[1] - inflate),
+                "max_y": float(center[1] + size[1] + inflate),
+            })
+        return blockers
+
+    def build_nav_scan_aabbs(self):
+        aabbs = []
+        for geom_id in range(self.model.ngeom):
+            if int(self.model.geom_group[geom_id]) != NAV_SCAN_GEOM_GROUP:
+                continue
+            if self.model.geom_type[geom_id] != mujoco.mjtGeom.mjGEOM_BOX:
+                continue
+            name = mujoco.mj_id2name(self.model, mujoco.mjtObj.mjOBJ_GEOM, geom_id) or f"geom_{geom_id}"
+            if not (name == "table_top" or name == "pickup_box_geom" or name.startswith("nav_wall_")):
+                continue
+            center = self.data.geom_xpos[geom_id].copy()
+            size = self.model.geom_size[geom_id].copy()
+            margin = NAV_SCAN_AABB_MARGIN
+            aabbs.append({
+                "name": name,
+                "min_x": float(center[0] - size[0] - margin),
+                "max_x": float(center[0] + size[0] + margin),
+                "min_y": float(center[1] - size[1] - margin),
+                "max_y": float(center[1] + size[1] + margin),
+            })
+        return aabbs
+
+    def nav_pose_blocked(self, x, y):
+        for blocker in self.nav_blockers:
+            if blocker["min_x"] <= x <= blocker["max_x"] and blocker["min_y"] <= y <= blocker["max_y"]:
+                return blocker["name"]
+        return None
+
+    def maybe_log_nav_collision(self, blocker_name):
+        now_sec = self.get_clock().now().nanoseconds * 1e-9
+        if now_sec - self.last_nav_collision_log_time < 1.0:
+            return
+        self.last_nav_collision_log_time = now_sec
+        self.get_logger().warn(
+            "Blocked kinematic base command before entering nav obstacle "
+            f"'{blocker_name}'. Pick a goal outside the inflated table/wall costmap.")
 
     def step(self):
         self.integrate_base()
@@ -219,7 +306,7 @@ class G1Mujoco(Node):
             self.publish_odom(stamp)
             self.publish_state(stamp)
         if self.step_count % SCAN_PERIOD_STEPS == 0:
-            # Publish a fresh matching odom -> pelvis transform and joint
+            # Publish fresh matching odom -> base_footprint -> pelvis transforms and joint
             # state immediately before the scan.  SLAM Toolbox and Nav2
             # message filters require the scan timestamp to be transformable
             # through both dynamic TF segments; separate now() calls can put
@@ -241,16 +328,37 @@ class G1Mujoco(Node):
             vx = max(-0.35, min(0.35, float(self.cmd_vel.linear.x)))
             vy = max(-0.25, min(0.25, float(self.cmd_vel.linear.y)))
             wz = max(-0.8, min(0.8, float(self.cmd_vel.angular.z)))
-        self.odom_vx = vx
-        self.odom_vy = vy
-        self.odom_wz = wz
         dt = float(self.model.opt.timestep)
         cos_yaw = math.cos(self.base_yaw)
         sin_yaw = math.sin(self.base_yaw)
-        self.base_x += (vx * cos_yaw - vy * sin_yaw) * dt
-        self.base_y += (vx * sin_yaw + vy * cos_yaw) * dt
+        old_x = self.base_x
+        old_y = self.base_y
+        dx = (vx * cos_yaw - vy * sin_yaw) * dt
+        dy = (vx * sin_yaw + vy * cos_yaw) * dt
+        new_x = self.base_x + dx
+        new_y = self.base_y + dy
+
+        blocker_name = self.nav_pose_blocked(new_x, new_y)
+        if blocker_name:
+            slide_x_blocker = self.nav_pose_blocked(self.base_x + dx, self.base_y)
+            slide_y_blocker = self.nav_pose_blocked(self.base_x, self.base_y + dy)
+            if not slide_x_blocker:
+                self.base_x += dx
+            elif not slide_y_blocker:
+                self.base_y += dy
+            else:
+                self.maybe_log_nav_collision(blocker_name)
+        else:
+            self.base_x = new_x
+            self.base_y = new_y
+
         self.base_yaw = math.atan2(
             math.sin(self.base_yaw + wz * dt), math.cos(self.base_yaw + wz * dt))
+        actual_dx = self.base_x - old_x
+        actual_dy = self.base_y - old_y
+        self.odom_vx = (actual_dx * cos_yaw + actual_dy * sin_yaw) / dt
+        self.odom_vy = (-actual_dx * sin_yaw + actual_dy * cos_yaw) / dt
+        self.odom_wz = wz
 
     def apply_base_pose(self):
         if self.base_qposadr is None or self.base_qveladr is None:
@@ -276,25 +384,34 @@ class G1Mujoco(Node):
         if stamp is None:
             stamp = self.get_clock().now().to_msg()
         qx, qy, qz, qw = yaw_to_quaternion(self.base_yaw)
-        transform = TransformStamped()
-        transform.header.stamp = stamp
-        transform.header.frame_id = "odom"
-        transform.child_frame_id = "pelvis"
-        transform.transform.translation.x = self.base_x
-        transform.transform.translation.y = self.base_y
-        transform.transform.translation.z = 0.0
-        transform.transform.rotation.x = qx
-        transform.transform.rotation.y = qy
-        transform.transform.rotation.z = qz
-        transform.transform.rotation.w = qw
-        self.tf_broadcaster.sendTransform(transform)
+        base_transform = TransformStamped()
+        base_transform.header.stamp = stamp
+        base_transform.header.frame_id = "odom"
+        base_transform.child_frame_id = "base_footprint"
+        base_transform.transform.translation.x = self.base_x
+        base_transform.transform.translation.y = self.base_y
+        base_transform.transform.translation.z = 0.0
+        base_transform.transform.rotation.x = qx
+        base_transform.transform.rotation.y = qy
+        base_transform.transform.rotation.z = qz
+        base_transform.transform.rotation.w = qw
+
+        pelvis_transform = TransformStamped()
+        pelvis_transform.header.stamp = stamp
+        pelvis_transform.header.frame_id = "base_footprint"
+        pelvis_transform.child_frame_id = "pelvis"
+        pelvis_transform.transform.translation.x = 0.0
+        pelvis_transform.transform.translation.y = 0.0
+        pelvis_transform.transform.translation.z = self.base_z
+        pelvis_transform.transform.rotation.w = 1.0
+        self.tf_broadcaster.sendTransform([base_transform, pelvis_transform])
 
         odom = Odometry()
-        odom.header = transform.header
-        odom.child_frame_id = "pelvis"
+        odom.header = base_transform.header
+        odom.child_frame_id = "base_footprint"
         odom.pose.pose.position.x = self.base_x
         odom.pose.pose.position.y = self.base_y
-        odom.pose.pose.orientation = transform.transform.rotation
+        odom.pose.pose.orientation = base_transform.transform.rotation
         odom.twist.twist.linear.x = self.odom_vx
         odom.twist.twist.linear.y = self.odom_vy
         odom.twist.twist.angular.z = self.odom_wz
@@ -325,6 +442,40 @@ class G1Mujoco(Node):
                 best = min(best, horizontal_distance)
         return best
 
+    def ray_aabb_projection(self, origin, yaw):
+        if not self.nav_scan_aabbs:
+            return float("inf")
+        ox = float(origin[0])
+        oy = float(origin[1])
+        dx = math.cos(yaw)
+        dy = math.sin(yaw)
+        best = float("inf")
+        for box in self.nav_scan_aabbs:
+            tmin = -float("inf")
+            tmax = float("inf")
+            if abs(dx) < 1e-9:
+                if ox < box["min_x"] or ox > box["max_x"]:
+                    continue
+            else:
+                tx1 = (box["min_x"] - ox) / dx
+                tx2 = (box["max_x"] - ox) / dx
+                tmin = max(tmin, min(tx1, tx2))
+                tmax = min(tmax, max(tx1, tx2))
+            if abs(dy) < 1e-9:
+                if oy < box["min_y"] or oy > box["max_y"]:
+                    continue
+            else:
+                ty1 = (box["min_y"] - oy) / dy
+                ty2 = (box["max_y"] - oy) / dy
+                tmin = max(tmin, min(ty1, ty2))
+                tmax = min(tmax, max(ty1, ty2))
+            if tmax < max(tmin, 0.0):
+                continue
+            distance = tmin if tmin >= 0.0 else tmax
+            if SCAN_RANGE_MIN <= distance <= SCAN_RANGE_MAX:
+                best = min(best, distance)
+        return best
+
     def publish_scan(self, stamp=None):
         if stamp is None:
             stamp = self.get_clock().now().to_msg()
@@ -348,7 +499,10 @@ class G1Mujoco(Node):
         for index in range(SCAN_SAMPLES):
             local_angle = scan.angle_min + index * scan.angle_increment
             world_angle = self.base_yaw + local_angle
-            distance = self.ray_scene_projection(origin, world_angle)
+            distance = min(
+                self.ray_scene_projection(origin, world_angle),
+                self.ray_aabb_projection(origin, world_angle),
+            )
             ranges.append(float(distance))
             intensities.append(1.0 if math.isfinite(distance) else 0.0)
         scan.ranges = ranges
@@ -448,6 +602,9 @@ def main():
     node = G1Mujoco()
     try:
         rclpy.spin(node)
+    except KeyboardInterrupt:
+        pass
     finally:
         node.destroy_node()
-        rclpy.shutdown()
+        if rclpy.ok():
+            rclpy.shutdown()

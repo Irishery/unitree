@@ -72,6 +72,72 @@ RViz можно запустить отдельным контейнером п�
 ./scripts/mujoco_rviz.sh
 ```
 
+По умолчанию скрипт открывает безопасный профиль `RVIZ_PROFILE=nav`: модель G1,
+SLAM map, `/scan`, costmaps и `/plan`, но без RGB/PointCloud виджетов. Полный
+профиль с D435i-панелями можно попробовать отдельно:
+
+```bash
+RVIZ_PROFILE=full ./scripts/mujoco_rviz.sh
+```
+
+Для слабых машин (software GL / llvmpipe) есть лёгкий профиль со скелетной
+моделью робота (сферы вместо 51 текстурированного меша, вдвое меньше память):
+
+```bash
+RVIZ_PROFILE=lite ./scripts/mujoco_rviz.sh
+```
+
+Скелетная модель публикуется `description_relay` на `/robot_description_lite`.
+MuJoCo-вьювер тоже можно разгрузить — без теней и текстур:
+
+```bash
+./scripts/mujoco_up.sh viewer_lite:=true
+```
+
+`mujoco_rviz.sh` перед стартом RViz ждёт `/navigate_to_pose`, `/map` и
+`/global_costmap/costmap`. Если нужно открыть RViz сразу, без ожидания Nav2:
+
+```bash
+RVIZ_WAIT_NAV=false ./scripts/mujoco_rviz.sh
+```
+
+Если RViz пишет `navigate_to_pose action server is not available`, проверьте,
+что MuJoCo/Nav2 контейнер действительно запущен и видит action server:
+
+```bash
+docker exec unitree-g1-mujoco bash -lc \
+  'source /opt/ros/jazzy/setup.bash && source /ws/install/setup.bash && ros2 action list | grep navigate_to_pose'
+```
+
+Если в одном терминале вы задавали `ROS_DOMAIN_ID` через `scripts/use_network.sh`,
+запускайте MuJoCo и RViz из терминалов с тем же `ROS_DOMAIN_ID`; скрипты
+пробрасывают этот env внутрь Docker.
+
+Если снова появляется `failed to create drawable`, сначала пересоберите образ
+после добавления Mesa-драйверов, затем попробуйте режим с полным доступом к GPU:
+
+```bash
+./scripts/mujoco_build.sh
+RVIZ_GL=privileged ./scripts/mujoco_rviz.sh
+```
+
+Альтернативные режимы:
+
+```bash
+RVIZ_GL=llvmpipe ./scripts/mujoco_rviz.sh
+RVIZ_GL=software ./scripts/mujoco_rviz.sh
+RVIZ_GL=diagnose ./scripts/mujoco_rviz.sh
+```
+
+Когда нужно проверить SLAM/Nav2 без RViz, можно сохранить PNG-снимок текущих
+`/scan`, `/odom`, `/plan` и costmap:
+
+```bash
+./scripts/mujoco_nav_snapshot.sh
+```
+
+Файл появится в `debug/mujoco_nav_snapshot.png`.
+
 Для headless-проверки без окна MuJoCo, RViz и RGB-D renderer:
 
 ```bash
@@ -85,7 +151,7 @@ docker run --rm --name unitree-g1-mujoco --network host --ipc=host \
 Отправить цель B в уже запущенный контейнер:
 
 ```bash
-./scripts/mujoco_nav_goal.sh 1.0 0.0
+./scripts/mujoco_nav_goal.sh 1.20 0.90 --feedback
 ```
 
 Скрипт перед отправкой цели ждёт `controller_server`, `planner_server`, первый
@@ -94,20 +160,29 @@ docker run --rm --name unitree-g1-mujoco --network host --ipc=host \
 раньше, чем SLAM успеет создать `map -> odom` и прогреть costmap, а ранняя цель
 в этот момент часто завершается `ABORTED`.
 
-Аргументы: `X Y [YAW_RAD]` в frame `map`. Например, `1.0 0.0` — проехать из
-текущей точки A примерно на метр вперёд. Если нужно видеть каждое сообщение
+Не используйте `1.0 0.0` для nav-сцены со столом: эта точка находится внутри
+inflated-зоны стола. Для проверки обхода отправляйте цель сбоку от стола,
+например `1.20 0.90` или `1.20 -0.90`.
+
+Аргументы: `X Y [YAW_RAD]` в frame `map`. Например, `1.20 0.90` — пройти из
+текущей точки A к точке B сбоку за столом. Если нужно видеть каждое сообщение
 Nav2 feedback с текущей позой и оставшейся дистанцией:
 
 ```bash
-./scripts/mujoco_nav_goal.sh --feedback 1.0 0.0
+./scripts/mujoco_nav_goal.sh --feedback 1.20 0.90
 ```
+
+В MuJoCo-навигации локальный `FollowPath` переключён с дефолтного MPPI на
+`RegulatedPurePursuitController`: он детерминированнее для текущей
+кинематической модели G1, не семплирует задний ход вокруг препятствия и лучше
+подходит для проверки простого прохода A → B.
 
 Контракт навигации:
 
 ```text
 /scan      sensor_msgs/msg/LaserScan    360° Mid-360-like scan, frame mid360_scan
-/odom      nav_msgs/msg/Odometry        odom -> pelvis
-/tf        tf2_msgs/msg/TFMessage       dynamic odom -> pelvis plus robot TF
+/odom      nav_msgs/msg/Odometry        odom -> base_footprint
+/tf        tf2_msgs/msg/TFMessage       dynamic odom -> base_footprint -> pelvis plus robot TF
 /map       nav_msgs/msg/OccupancyGrid   online SLAM map
 /plan      nav_msgs/msg/Path            Nav2 global plan
 /cmd_vel   geometry_msgs/msg/Twist      Nav2 velocity command

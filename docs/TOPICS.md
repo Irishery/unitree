@@ -39,7 +39,7 @@ physical G1 bridge:
 | Name | Type | Meaning |
 |---|---|---|
 | `/scan` | `sensor_msgs/msg/LaserScan` | Level 2D projection of the stock Mid-360 mounting position |
-| `/odom` | `nav_msgs/msg/Odometry` | Simulation odometry, frames `odom` and `pelvis`; Gazebo measures model motion, MuJoCo currently publishes a kinematic base |
+| `/odom` | `nav_msgs/msg/Odometry` | Simulation odometry; Gazebo uses `odom -> pelvis`, MuJoCo uses `odom -> base_footprint -> pelvis` with a kinematic base |
 | `/map` | `nav_msgs/msg/OccupancyGrid` | Online map from SLAM Toolbox |
 | `/plan` | `nav_msgs/msg/Path` | Current Nav2 global plan |
 | `/cmd_vel` | `geometry_msgs/msg/Twist` | Final Nav2/collision-monitor velocity command to the active simulator |

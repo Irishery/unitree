@@ -6,13 +6,6 @@ Panels:
 Visualization Manager:
   Class: ""
   Displays:
-    # NOTE: no rviz_default_plugins/Map displays here on purpose.  RViz's
-    # Map swatch rendering (indexed_8bit_image shader + vertex buffers)
-    # crashes the whole GL context on this laptop's Mesa/amdgpu stack,
-    # both with hardware GL and with llvmpipe.  The 2D nav profile
-    # (g1_mujoco_nav.rviz) keeps the map/costmap panels when the machine
-    # renders them correctly; this 3D profile shows the collision data as
-    # the voxel point cloud instead.
     - Class: rviz_default_plugins/Grid
       Enabled: true
       Name: Grid
@@ -27,13 +20,24 @@ Visualization Manager:
       TF Prefix: ""
       Update Interval: 0
       Visual Enabled: true
-      Collision Enabled: true
+      Collision Enabled: false
       Value: true
     - Class: rviz_default_plugins/TF
       Enabled: true
       Name: TF
       Show Axes: false
       Show Names: false
+      Value: true
+    - Class: rviz_default_plugins/Map
+      Alpha: 0.7
+      Color Scheme: map
+      Draw Behind: true
+      Enabled: true
+      Name: SLAM Map
+      Topic:
+        Durability Policy: Transient Local
+        Reliability Policy: Reliable
+        Value: /map
       Value: true
     - Class: rviz_default_plugins/LaserScan
       Enabled: true
@@ -44,17 +48,25 @@ Visualization Manager:
         Reliability Policy: Best Effort
         Value: /scan
       Value: true
-    - Class: rviz_default_plugins/PointCloud2
+    - Class: rviz_default_plugins/Map
+      Alpha: 0.35
+      Color Scheme: costmap
       Enabled: true
-      Name: Local Costmap Voxels
+      Name: Global Costmap
       Topic:
-        Depth: 5
-        Durability Policy: Volatile
-        History Policy: Keep Last
+        Durability Policy: Transient Local
         Reliability Policy: Reliable
-        Value: /local_costmap/voxel_points
-      Size (m): 0.03
-      Style: Points
+        Value: /global_costmap/costmap
+      Value: true
+    - Class: rviz_default_plugins/Map
+      Alpha: 0.35
+      Color Scheme: costmap
+      Enabled: true
+      Name: Local Costmap
+      Topic:
+        Durability Policy: Transient Local
+        Reliability Policy: Reliable
+        Value: /local_costmap/costmap
       Value: true
     - Class: rviz_default_plugins/Path
       Enabled: true
@@ -64,6 +76,7 @@ Visualization Manager:
         Value: /plan
       Value: true
     - Class: rviz_default_plugins/Marker
+      Enabled: true
       Name: Detected Box Centre
       Topic:
         Depth: 5
@@ -72,10 +85,6 @@ Visualization Manager:
         Reliability Policy: Reliable
         Value: /g1/perception/box_marker
       Value: true
-    # NOTE: no rviz_default_plugins/Image display here on purpose: it
-    # crashes RViz on this laptop's Mesa stack even while disabled (GLSL
-    # sampler conflict -> dead GL context -> "failed to create drawable"
-    # spam and a segfault).  View the camera feed outside RViz instead.
   Global Options:
     Fixed Frame: map
   Tools:
@@ -86,15 +95,6 @@ Visualization Manager:
     - Class: nav2_rviz_plugins/GoalTool
   Views:
     Current:
-      Class: rviz_default_plugins/Orbit
-      Distance: 4.5
-      Focal Point:
-        X: 1.0
-        Y: 0
-        Z: 0.6
-        Focal Shape Fixed Size: true
-      Name: Current View
-      Near Clip Distance: 0.01
-      Pitch: 0.35
+      Class: rviz_default_plugins/TopDownOrtho
+      Scale: 45
       Target Frame: <Fixed Frame>
-      Yaw: 3.82

@@ -5,6 +5,7 @@ from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import IncludeLaunchDescription
 from launch.actions import DeclareLaunchArgument
+from launch.actions import TimerAction
 from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
@@ -30,6 +31,7 @@ def generate_launch_description():
     robot_description = robot_description.replace(".STL", ".dae")
     return LaunchDescription([
         DeclareLaunchArgument("viewer", default_value="true"),
+        DeclareLaunchArgument("viewer_lite", default_value="false"),
         DeclareLaunchArgument("rviz", default_value="true"),
         DeclareLaunchArgument("publish_camera", default_value="true"),
         DeclareLaunchArgument("navigation", default_value="true"),
@@ -42,6 +44,7 @@ def generate_launch_description():
             output="screen",
             parameters=[{
                 "viewer": LaunchConfiguration("viewer"),
+                "viewer_lite": LaunchConfiguration("viewer_lite"),
                 "publish_camera": publish_camera,
                 "tabletop_pick": tabletop_pick,
             }],
@@ -51,6 +54,18 @@ def generate_launch_description():
             executable="robot_state_publisher",
             parameters=[{"robot_description": robot_description}],
             remappings=[("joint_states", "/g1/joint_states")],
+            output="screen",
+        ),
+        # The latched TRANSIENT_LOCAL /robot_description sample is not
+        # delivered to late subscribers in this Fast DDS/Docker stack, so
+        # RViz never receives the URDF and renders primitive shapes only.
+        # Republish the same text as a volatile topic that the RViz
+        # profiles subscribe to (see description_relay.py).
+        Node(
+            package="g1_mujoco",
+            executable="description_relay",
+            name="description_relay",
+            parameters=[{"robot_description": robot_description}],
             output="screen",
         ),
         # MuJoCo's D435i renderer is fixed in the head recess.  This makes its
@@ -64,14 +79,17 @@ def generate_launch_description():
             ],
             output="screen",
         ),
-        # The stock Mid-360 is mounted upside down in the vendor description.
-        # This level child frame matches the 2D /scan frame used by SLAM/Nav2.
+        # Nav2 consumes a planar LaserScan with angle 0.0 pointing forward in
+        # the robot base frame.  Keep this scan frame level and aligned with
+        # base_footprint; the visual/vendor mid360_link remains in the robot
+        # model, but the synthetic 2D projection is already expressed relative
+        # to the kinematic base yaw in sim.py.
         Node(
             package="tf2_ros",
             executable="static_transform_publisher",
             arguments=[
-                "0", "0", "0", "3.141592653589793", "0.05112069379091391", "0",
-                "mid360_link", "mid360_scan",
+                "0", "0", "0", "0", "0", "0",
+                "base_footprint", "mid360_scan",
             ],
             output="screen",
         ),
@@ -94,11 +112,21 @@ def generate_launch_description():
             launch_arguments={"use_sim_time": "false", "autostart": "true", "slam": slam}.items(),
             condition=IfCondition(navigation),
         ),
-        Node(
-            package="rviz2",
-            executable="rviz2",
-            arguments=["-d", str(package_share / "rviz" / "g1_mujoco.rviz")],
-            condition=IfCondition(LaunchConfiguration("rviz")),
-            output="screen",
+        TimerAction(
+            # Give SLAM Toolbox/Nav2 a few seconds to create /map, costmaps and
+            # /navigate_to_pose before the Nav2 RViz panel starts querying the
+            # action server.  The lightweight nav profile also avoids the RGB
+            # Image display that triggers GLSL sampler errors on some Mesa
+            # drivers.
+            period=12.0,
+            actions=[
+                Node(
+                    package="rviz2",
+                    executable="rviz2",
+                    arguments=["-d", str(package_share / "rviz" / "g1_mujoco_nav.rviz")],
+                    condition=IfCondition(LaunchConfiguration("rviz")),
+                    output="screen",
+                )
+            ],
         ),
     ])
