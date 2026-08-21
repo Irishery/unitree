@@ -212,7 +212,7 @@ Nav2 feedback с текущей позой и оставшейся дистан�
 Контракт навигации:
 
 ```text
-/mid360/points sensor_msgs/msg/PointCloud2  3D Mid-360-like cloud, frame mid360_scan
+/mid360/points sensor_msgs/msg/PointCloud2  3D Mid-360-like cloud, frame odom
 /scan      sensor_msgs/msg/LaserScan    2D navigation projection of the Mid-360 cloud
 /odom      nav_msgs/msg/Odometry        odom -> base_footprint
 /tf        tf2_msgs/msg/TFMessage       dynamic odom -> base_footprint -> pelvis plus robot TF
@@ -220,6 +220,11 @@ Nav2 feedback с текущей позой и оставшейся дистан�
 /plan      nav_msgs/msg/Path            Nav2 global plan
 /cmd_vel   geometry_msgs/msg/Twist      Nav2 velocity command
 ```
+
+Локальный `voxel_layer` отмечает препятствия по `/mid360/points`, поэтому
+`/local_costmap/voxel_points` сохраняет фактическую высоту столов и других
+объектов. Плоский `/scan` используется этим слоем только для очистки лучами и
+отдельно остаётся входом SLAM Toolbox.
 
 Важное ограничение: в MuJoCo `/cmd_vel` пока двигает базу кинематически в ROS
 TF/odom, а не включает динамическую ходьбу G1. Это сделано, чтобы отладить
