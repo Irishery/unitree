@@ -32,7 +32,7 @@ D435.
 MuJoCo-стенд также поднимает штатный для G1 навигационный контур:
 
 ```text
-mid360_scan -> /scan -> SLAM Toolbox -> /map -> Nav2 -> /cmd_vel -> /odom + /tf
+mid360_scan -> /mid360/points + /scan -> SLAM Toolbox -> /map -> Nav2 -> /cmd_vel -> /odom + /tf
 ```
 
 По умолчанию для навигации загружается отдельная MuJoCo-сцена
@@ -212,7 +212,8 @@ Nav2 feedback с текущей позой и оставшейся дистан�
 Контракт навигации:
 
 ```text
-/scan      sensor_msgs/msg/LaserScan    360° Mid-360-like scan, frame mid360_scan
+/mid360/points sensor_msgs/msg/PointCloud2  3D Mid-360-like cloud, frame mid360_scan
+/scan      sensor_msgs/msg/LaserScan    2D navigation projection of the Mid-360 cloud
 /odom      nav_msgs/msg/Odometry        odom -> base_footprint
 /tf        tf2_msgs/msg/TFMessage       dynamic odom -> base_footprint -> pelvis plus robot TF
 /map       nav_msgs/msg/OccupancyGrid   online SLAM map

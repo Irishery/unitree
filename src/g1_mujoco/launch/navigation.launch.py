@@ -99,10 +99,9 @@ def generate_launch_description():
             "behavior_server.ros__parameters.min_rotational_vel": "0.15",
             "behavior_server.ros__parameters.rotational_acc_lim": "1.2",
             # Include the high-mounted Mid-360 scan origin in the local voxel
-            # layer height window.  Nav2's voxel grid supports at most 16
-            # z-values; with the default 0.05 m resolution this spans
-            # 0.60..1.40 m relative to base_footprint, covering the simulated
-            # scan origin above the lifted pelvis.
+            # layer height window.  The MuJoCo scan frame is mounted on the
+            # head/torso, matching the real robot, so this spans 0.60..1.40 m
+            # relative to base_footprint.
             "local_costmap.local_costmap.ros__parameters.voxel_layer.origin_z": "0.6",
             "local_costmap.local_costmap.ros__parameters.voxel_layer.z_voxels": "16",
         },

@@ -46,6 +46,18 @@ Visualization Manager:
       Value: true
     - Class: rviz_default_plugins/PointCloud2
       Enabled: true
+      Name: Mid-360 3D Points
+      Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /mid360/points
+      Size (m): 0.025
+      Style: Points
+      Value: true
+    - Class: rviz_default_plugins/PointCloud2
+      Enabled: true
       Name: Local Costmap Voxels
       Topic:
         Depth: 5

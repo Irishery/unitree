@@ -221,6 +221,7 @@ class G1Mujoco(Node):
         self.grasp_pub = self.create_publisher(Bool, "/g1/mujoco/physical_grasp", 10)
         self.odom_pub = self.create_publisher(Odometry, "/odom", 10)
         self.scan_pub = self.create_publisher(LaserScan, "/scan", 10)
+        self.mid360_points_pub = self.create_publisher(PointCloud2, "/mid360/points", 10)
         self.color_pub = self.create_publisher(Image, "/camera/camera/color/image_raw", 10)
         self.depth_pub = self.create_publisher(Image, "/camera/camera/depth/image_rect_raw", 10)
         self.color_info_pub = self.create_publisher(CameraInfo, "/camera/camera/color/camera_info", 10)
@@ -579,6 +580,7 @@ class G1Mujoco(Node):
             self.publish_odom(stamp)
             self.publish_state(stamp)
             self.publish_scan(stamp)
+            self.publish_mid360_points(stamp)
         if self.renderer is not None and self.step_count % 17 == 0:
             self.publish_camera()
         if self.viewer is not None and self.step_count % 10 == 0:
@@ -687,9 +689,27 @@ class G1Mujoco(Node):
             return self.data.xpos[self.torso_body_id].copy() + rotation @ MID360_TORSO_OFFSET
         return np.array([self.base_x, self.base_y, self.base_z + 0.47], dtype=np.float64)
 
+    def scan_rotation(self):
+        if self.torso_body_id >= 0:
+            return self.data.xmat[self.torso_body_id].reshape(3, 3).copy()
+        cos_yaw = math.cos(self.base_yaw)
+        sin_yaw = math.sin(self.base_yaw)
+        return np.array([
+            [cos_yaw, -sin_yaw, 0.0],
+            [sin_yaw, cos_yaw, 0.0],
+            [0.0, 0.0, 1.0],
+        ], dtype=np.float64)
+
+    def ray_scene_distance(self, origin, ray):
+        geomid = np.array([-1], dtype=np.int32)
+        distance = mujoco.mj_ray(
+            self.model, self.data, origin, ray, self.nav_scan_geomgroup, 1, -1, geomid)
+        if distance < 0.0:
+            return float("inf")
+        return float(distance)
+
     def ray_scene_projection(self, origin, yaw):
         best = float("inf")
-        geomid = np.array([-1], dtype=np.int32)
         for pitch in MID360_VERTICAL_ANGLES:
             cos_pitch = math.cos(float(pitch))
             ray = np.array([
@@ -697,9 +717,8 @@ class G1Mujoco(Node):
                 cos_pitch * math.sin(yaw),
                 math.sin(float(pitch)),
             ], dtype=np.float64)
-            distance = mujoco.mj_ray(
-                self.model, self.data, origin, ray, self.nav_scan_geomgroup, 1, -1, geomid)
-            if distance < 0.0:
+            distance = self.ray_scene_distance(origin, ray)
+            if not math.isfinite(distance):
                 continue
             horizontal_distance = float(distance * cos_pitch)
             if SCAN_RANGE_MIN <= horizontal_distance <= SCAN_RANGE_MAX:
@@ -772,6 +791,33 @@ class G1Mujoco(Node):
         scan.ranges = ranges
         scan.intensities = intensities
         self.scan_pub.publish(scan)
+
+    def publish_mid360_points(self, stamp=None):
+        if stamp is None:
+            stamp = self.get_clock().now().to_msg()
+        origin = self.scan_origin()
+        rotation = self.scan_rotation()
+        points = []
+        for pitch in MID360_VERTICAL_ANGLES:
+            cos_pitch = math.cos(float(pitch))
+            sin_pitch = math.sin(float(pitch))
+            for index in range(SCAN_SAMPLES):
+                local_angle = -math.pi + index * (2.0 * math.pi / (SCAN_SAMPLES - 1))
+                ray_local = np.array([
+                    cos_pitch * math.cos(local_angle),
+                    cos_pitch * math.sin(local_angle),
+                    sin_pitch,
+                ], dtype=np.float64)
+                ray_world = rotation @ ray_local
+                distance = self.ray_scene_distance(origin, ray_world)
+                if not (SCAN_RANGE_MIN <= distance <= SCAN_RANGE_MAX):
+                    continue
+                hit_local = ray_local * distance
+                points.append((float(hit_local[0]), float(hit_local[1]), float(hit_local[2])))
+        cloud_header = Header()
+        cloud_header.stamp = stamp
+        cloud_header.frame_id = "mid360_scan"
+        self.mid360_points_pub.publish(point_cloud2.create_cloud_xyz32(cloud_header, points))
 
     def publish_state(self, stamp=None):
         if stamp is None:

@@ -81,17 +81,16 @@ def generate_launch_description():
             ],
             output="screen",
         ),
-        # Nav2 consumes a planar LaserScan with angle 0.0 pointing forward in
-        # the robot base frame.  Keep this scan frame level and aligned with
-        # base_footprint; the visual/vendor mid360_link remains in the robot
-        # model, but the synthetic 2D projection is already expressed relative
-        # to the kinematic base yaw in sim.py.
+        # The MuJoCo Mid-360 scan is mounted in the head/torso, like the real
+        # robot.  sim.py publishes a real 3D PointCloud2 from this frame and a
+        # 2D LaserScan projection for SLAM/Nav2, so the local voxel layer sees
+        # a high sensor origin instead of a base-footprint shortcut.
         Node(
             package="tf2_ros",
             executable="static_transform_publisher",
             arguments=[
-                "0", "0", "0", "0", "0", "0",
-                "base_footprint", "mid360_scan",
+                "0.0002835", "0.00003", "0.428434", "0", "0", "0",
+                "torso_link", "mid360_scan",
             ],
             output="screen",
         ),

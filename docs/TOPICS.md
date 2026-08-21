@@ -38,7 +38,8 @@ physical G1 bridge:
 
 | Name | Type | Meaning |
 |---|---|---|
-| `/scan` | `sensor_msgs/msg/LaserScan` | Level 2D projection of the stock Mid-360 mounting position |
+| `/mid360/points` | `sensor_msgs/msg/PointCloud2` | 3D Mid-360-like cloud from the head-mounted scan frame |
+| `/scan` | `sensor_msgs/msg/LaserScan` | 2D navigation projection of the Mid-360 cloud |
 | `/odom` | `nav_msgs/msg/Odometry` | Simulation odometry; Gazebo uses `odom -> pelvis`, MuJoCo uses `odom -> base_footprint -> pelvis` with a kinematic base |
 | `/map` | `nav_msgs/msg/OccupancyGrid` | Online map from SLAM Toolbox |
 | `/plan` | `nav_msgs/msg/Path` | Current Nav2 global plan |
