@@ -32,6 +32,7 @@ def generate_launch_description():
     return LaunchDescription([
         DeclareLaunchArgument("viewer", default_value="true"),
         DeclareLaunchArgument("viewer_lite", default_value="false"),
+        DeclareLaunchArgument("walk", default_value="false"),
         DeclareLaunchArgument("rviz", default_value="true"),
         DeclareLaunchArgument("publish_camera", default_value="true"),
         DeclareLaunchArgument("navigation", default_value="true"),
@@ -47,6 +48,7 @@ def generate_launch_description():
                 "viewer_lite": LaunchConfiguration("viewer_lite"),
                 "publish_camera": publish_camera,
                 "tabletop_pick": tabletop_pick,
+                "walk": LaunchConfiguration("walk"),
             }],
         ),
         Node(

@@ -16,6 +16,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 COPY vendor/g1_description /opt/unitree_ros/robots/g1_description
 COPY src/g1_mujoco /ws/src/g1_mujoco
+COPY models/walk /ws/models/walk
 RUN python3 /ws/src/g1_mujoco/scripts/prepare_mjcf.py \
       /opt/unitree_ros/robots/g1_description/g1_29dof_with_hand_rev_1_0.xml \
       /opt/unitree_ros/robots/g1_description/g1_29dof_with_dex3_tabletop.xml \

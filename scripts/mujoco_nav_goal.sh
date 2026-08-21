@@ -103,7 +103,32 @@ docker exec "${container_name}" bash -lc "
   wait_topic_once /local_costmap/costmap
   wait_topic_once /global_costmap/costmap
 
-  ros2 action send_goal /navigate_to_pose nav2_msgs/action/NavigateToPose \
-    \"{pose: {header: {frame_id: map}, pose: {position: {x: ${goal_x}, y: ${goal_y}, z: 0.0}, orientation: {z: ${goal_z}, w: ${goal_w}}}}}\" \
-    ${feedback_arg}
+  # The first goal after startup can hit a Fast DDS discovery race inside
+  # bt_navigator (\"Timed out while waiting for action server to
+  # acknowledge goal request for follow_path\") - the request reaches
+  # controller_server but the client gives up on the ack and aborts.
+  # A quick single resend is enough once the action graph is warm.
+  send_goal() {
+    ros2 action send_goal /navigate_to_pose nav2_msgs/action/NavigateToPose \
+      \"{pose: {header: {frame_id: map}, pose: {position: {x: ${goal_x}, y: ${goal_y}, z: 0.0}, orientation: {z: ${goal_z}, w: ${goal_w}}}}}\" \
+      ${feedback_arg}
+  }
+  out_file=\$(mktemp)
+  if ! send_goal 2>&1 | tee \"\${out_file}\"; then
+    echo \"Goal send failed; retrying once...\" >&2
+    sleep 3
+    send_goal
+    rc=\$?
+    rm -f \"\${out_file}\"
+    exit \${rc}
+  fi
+  if grep -q \"Goal finished with status: ABORTED\" \"\${out_file}\" && ! grep -q \"number_of_recoveries: [1-9]\" \"\${out_file}\"; then
+    echo \"Fast abort (likely first-goal DDS discovery race); retrying once...\" >&2
+    sleep 3
+    send_goal
+    rc=\$?
+    rm -f \"\${out_file}\"
+    exit \${rc}
+  fi
+  rm -f \"\${out_file}\"
 "

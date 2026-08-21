@@ -2,6 +2,7 @@
 from pathlib import Path
 import math
 import os
+import xml.etree.ElementTree as ET
 
 import mujoco
 import numpy as np
@@ -77,6 +78,51 @@ NAV_BASE_COLLISION_RADIUS = 0.26
 NAV_BASE_COLLISION_MARGIN = 0.05
 NAV_SCAN_AABB_MARGIN = 0.03
 
+# Walking-mode deployment constants for Unitree's pretrained 12-DoF G1
+# locomotion policy (models/walk/g1_12dof_motion.pt, from unitree_rl_gym
+# deploy/pre_train/g1/motion.pt).  Values reproduce
+# deploy/deploy_mujoco/configs/g1.yaml so the policy observes exactly the
+# distributions it was trained on.
+WALK_LEG_JOINTS = [
+    "left_hip_pitch_joint", "left_hip_roll_joint", "left_hip_yaw_joint",
+    "left_knee_joint", "left_ankle_pitch_joint", "left_ankle_roll_joint",
+    "right_hip_pitch_joint", "right_hip_roll_joint", "right_hip_yaw_joint",
+    "right_knee_joint", "right_ankle_pitch_joint", "right_ankle_roll_joint",
+]
+WALK_DEFAULT_ANGLES = np.array(
+    [-0.1, 0.0, 0.0, 0.3, -0.2, 0.0,
+     -0.1, 0.0, 0.0, 0.3, -0.2, 0.0], dtype=np.float32)
+WALK_KPS = np.array(
+    [100, 100, 100, 150, 40, 40, 100, 100, 100, 150, 40, 40], dtype=np.float32)
+WALK_KDS = np.array(
+    [2, 2, 2, 4, 2, 2, 2, 2, 2, 4, 2, 2], dtype=np.float32)
+WALK_ACTION_SCALE = 0.25
+WALK_ANG_VEL_SCALE = 0.25
+WALK_DOF_VEL_SCALE = 0.05
+WALK_CMD_SCALE = np.array([2.0, 2.0, 0.25], dtype=np.float32)
+WALK_GAIT_PERIOD = 0.8
+WALK_CONTROL_DECIMATION = 10
+WALK_NUM_OBS = 47
+WALK_FALL_Z = 0.62
+WALK_POLICY_PATH = "/ws/models/walk/g1_12dof_motion.pt"
+# Local velocity servo around the walking policy.  The policy has a
+# standstill drift and a velocity gain error on this 29-DoF body (heavier
+# than the 12-DoF training robot); feeding cmd + gain*(cmd - measured)
+# holds position at zero command and restores tracking.  The measured
+# twist comes from finite differences, so it is low-pass filtered first.
+WALK_VEL_SERVO_GAIN = 1.5
+WALK_VEL_FILTER_TAU = 0.3
+# Walking command guard margin around the physical obstacle AABBs.
+WALK_BLOCKER_MARGIN = 0.05
+# Position hold while idle: the policy creeps ~5 cm/s at zero command, so
+# Nav2's zero cmd would let a "standing" robot wander across the room.
+# When the command drops to zero, anchor the pose and feed back a small
+# correcting velocity until motion resumes.
+WALK_HOLD_XY_GAIN = 0.8
+WALK_HOLD_YAW_GAIN = 1.0
+WALK_HOLD_XY_CLIP = 0.15
+WALK_HOLD_YAW_CLIP = 0.3
+
 
 def yaw_to_quaternion(yaw):
     half = yaw * 0.5
@@ -94,14 +140,22 @@ class G1Mujoco(Node):
         self.declare_parameter("viewer", True)
         self.declare_parameter("viewer_lite", False)
         self.declare_parameter("tabletop_pick", False)
+        self.declare_parameter("walk", False)
+        self.declare_parameter("walk_policy", WALK_POLICY_PATH)
         self.tabletop_pick = bool(self.get_parameter("tabletop_pick").value)
+        self.walk = bool(self.get_parameter("walk").value)
+        if self.walk and self.tabletop_pick:
+            raise RuntimeError("walk:=true and tabletop_pick:=true are mutually exclusive")
         scene_file = (
             "g1_29dof_with_dex3_tabletop.xml"
             if self.tabletop_pick
             else "g1_29dof_with_dex3_nav.xml"
         )
         description = Path(os.environ.get("G1_DESCRIPTION_DIR", "/opt/unitree_ros/robots/g1_description"))
-        self.model = mujoco.MjModel.from_xml_path(str(description / scene_file))
+        scene_path = self.build_walk_scene(str(description / scene_file)) if self.walk else str(description / scene_file)
+        self.model = mujoco.MjModel.from_xml_path(scene_path)
+        if self.walk:
+            os.unlink(scene_path)
         self.data = mujoco.MjData(self.model)
         self.names = [
             mujoco.mj_id2name(self.model, mujoco.mjtObj.mjOBJ_JOINT, i)
@@ -124,10 +178,22 @@ class G1Mujoco(Node):
         self.torso_body_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_BODY, "torso_link")
         self.nav_scan_geomgroup = np.zeros(6, dtype=np.uint8)
         self.nav_scan_geomgroup[NAV_SCAN_GEOM_GROUP] = 1
-        for name, position in ARMS_AT_SIDES.items():
-            self.data.qpos[self.model.jnt_qposadr[self.joint_ids[name]]] = position
+        # The bent-elbow ARMS_AT_SIDES pose is a visual tabletop rest pose;
+        # it shifts the CoM forward and destabilises the walking policy.
+        # Walking keeps the straight qpos0 arms, matching the rigid-torso
+        # training model.
+        if not self.walk:
+            for name, position in ARMS_AT_SIDES.items():
+                self.data.qpos[self.model.jnt_qposadr[self.joint_ids[name]]] = position
+        if self.walk:
+            # Start the legs in the policy's default pose so the first PD
+            # targets match the physical state.
+            for name, position in zip(WALK_LEG_JOINTS, WALK_DEFAULT_ANGLES):
+                self.data.qpos[self.model.jnt_qposadr[self.joint_ids[name]]] = position
         mujoco.mj_forward(self.model, self.data)
         self.target = {name: self.qpos(name) for name in self.names}
+        if self.walk:
+            self.setup_walk()
         self.step_count = 0
         self.base_x = 0.0
         self.base_y = 0.0
@@ -142,6 +208,13 @@ class G1Mujoco(Node):
         self.last_nav_collision_log_time = 0.0
         self.nav_blockers = self.build_nav_blockers() if not self.tabletop_pick else []
         self.nav_scan_aabbs = self.build_nav_scan_aabbs() if not self.tabletop_pick else []
+        # In walk mode the obstacles have real contacts (see
+        # build_walk_scene), so the command guard only needs the physical
+        # AABB plus a small margin - the full kinematic inflation would
+        # freeze the drifting walking base inside the costmap's inflated
+        # zone with no command able to move it back out.
+        self.walk_blockers = (
+            self.build_nav_blockers(inflate=WALK_BLOCKER_MARGIN) if self.walk else [])
         self.declare_parameter("publish_camera", True)
         self.publisher = self.create_publisher(JointState, "/g1/joint_states", 10)
         self.contacts_pub = self.create_publisher(Int32, "/g1/mujoco/hand_box_contacts", 10)
@@ -185,10 +258,15 @@ class G1Mujoco(Node):
         if self.get_parameter("publish_camera").value:
             self.renderer = mujoco.Renderer(self.model, width=640, height=480)
         self.timer = self.create_timer(0.002, self.step)
-        self.get_logger().info(
-            "MuJoCo DEX3 contact simulation: no attach or weld is used for pickup_box; "
-            f"scene={scene_file}; Nav2 base motion is published kinematically as "
-            "odom -> base_footprint, with base_footprint -> pelvis lifting the visual model")
+        if self.walk:
+            self.get_logger().info(
+                "MuJoCo walk simulation: the legs are driven by the pretrained "
+                f"locomotion policy, scene={scene_file}")
+        else:
+            self.get_logger().info(
+                "MuJoCo DEX3 contact simulation: no attach or weld is used for pickup_box; "
+                f"scene={scene_file}; Nav2 base motion is published kinematically as "
+                "odom -> base_footprint, with base_footprint -> pelvis lifting the visual model")
         if self.nav_blockers:
             blocker_names = ", ".join(blocker["name"] for blocker in self.nav_blockers)
             self.get_logger().info(
@@ -229,9 +307,10 @@ class G1Mujoco(Node):
         self.last_cmd_time = now
         self.last_smoothed_cmd_time = now
 
-    def build_nav_blockers(self):
+    def build_nav_blockers(self, inflate=None):
+        if inflate is None:
+            inflate = NAV_BASE_COLLISION_RADIUS + NAV_BASE_COLLISION_MARGIN
         blockers = []
-        inflate = NAV_BASE_COLLISION_RADIUS + NAV_BASE_COLLISION_MARGIN
         for geom_id in range(self.model.ngeom):
             if int(self.model.geom_group[geom_id]) != NAV_SCAN_GEOM_GROUP:
                 continue
@@ -274,7 +353,10 @@ class G1Mujoco(Node):
         return aabbs
 
     def nav_pose_blocked(self, x, y):
-        for blocker in self.nav_blockers:
+        return self.nav_pose_blocked_in(self.nav_blockers, x, y)
+
+    def nav_pose_blocked_in(self, blockers, x, y):
+        for blocker in blockers:
             if blocker["min_x"] <= x <= blocker["max_x"] and blocker["min_y"] <= y <= blocker["max_y"]:
                 return blocker["name"]
         return None
@@ -288,19 +370,201 @@ class G1Mujoco(Node):
             "Blocked kinematic base command before entering nav obstacle "
             f"'{blocker_name}'. Pick a goal outside the inflated table/wall costmap.")
 
-    def step(self):
-        self.integrate_base()
-        self.apply_base_pose()
+    def build_walk_scene(self, source):
+        # MuJoCo 3.3.6 bakes geom contact masks at compile time: editing
+        # model.geom_contype/conaffinity after MjModel creation has no
+        # effect on collision filtering (verified empirically).  Walking
+        # needs real robot<->ground contacts, so write a scene variant
+        # with the robot geoms enabled and compile that.  The file is
+        # placed next to the source so the relative meshdir still works.
+        tree = ET.parse(source)
+        root = tree.getroot()
+        pelvis = root.find(".//body[@name='pelvis']")
+        if pelvis is None:
+            raise RuntimeError(f"no pelvis body in {source}")
+        for geom in pelvis.iter("geom"):
+            geom.set("contype", "4")
+            geom.set("conaffinity", "8")
+        # In the nav scene the walls/table/box are scan-only (masks 0/0):
+        # the kinematic base was stopped by the AABB guard, but a walking
+        # policy can physically drift straight through them.  Give the
+        # obstacles the same masks as the ground (8/4) so the robot is
+        # stopped by real contacts and cannot leave the room.
+        world = root.find("worldbody")
+        if world is not None:
+            for geom in world.iter("geom"):
+                name = geom.get("name", "")
+                if (name.startswith("nav_wall_") or name == "table_top"
+                        or name == "pickup_box_geom"):
+                    geom.set("contype", "8")
+                    geom.set("conaffinity", "4")
+        destination = source + ".walk.tmp.xml"
+        tree.write(destination)
+        return destination
+
+    def setup_walk(self):
+        # Runtime reconfiguration toward the policy's training conditions:
+        # real gravity (the kinematic scenes compensate it), leg joint
+        # damping/armature/frictionloss from the legged_gym defaults.
+        self.model.body_gravcomp[:] = 0.0
+        joint_ids = [self.joint_ids[name] for name in WALK_LEG_JOINTS]
+        self.walk_qadr = np.array([self.model.jnt_qposadr[j] for j in joint_ids])
+        # NOTE: for hinges behind the 7-dof free joint, jnt_dofadr ==
+        # jnt_qposadr - 1; qpos and qvel addresses are NOT interchangeable.
+        self.walk_vadr = np.array([self.model.jnt_dofadr[j] for j in joint_ids])
+        self.walk_aid = np.array([self.actuator_ids[name] for name in WALK_LEG_JOINTS])
+        self.walk_leg_set = set(WALK_LEG_JOINTS)
+        self.model.dof_damping[self.walk_vadr] = 0.001
+        self.model.dof_armature[self.walk_vadr] = 0.01
+        self.model.dof_frictionloss[self.walk_vadr] = 0.1
+        # torch is only imported when walking is actually requested.
+        import torch
+        policy_path = str(self.get_parameter("walk_policy").value)
+        self.walk_policy = torch.jit.load(policy_path)
+        self.walk_policy.eval()
+        self.walk_action = np.zeros(len(WALK_LEG_JOINTS), dtype=np.float32)
+        self.walk_target = WALK_DEFAULT_ANGLES.copy()
+        self.walk_obs = np.zeros(WALK_NUM_OBS, dtype=np.float32)
+        self.walk_vx_filt = 0.0
+        self.walk_vy_filt = 0.0
+        self.walk_wz_filt = 0.0
+        self.walk_hold = None
+        self.last_fall_log_time = 0.0
+        self.get_logger().info(
+            "MuJoCo walk mode: Unitree 12-DoF locomotion policy drives the legs "
+            f"(pd at 500 Hz, policy at {int(1.0 / (WALK_CONTROL_DECIMATION * self.model.opt.timestep))} Hz); "
+            "/cmd_vel is the velocity command and odom is derived from the physics root")
+
+    def control_walk(self):
+        # Policy PD on the legs.
+        q_leg = self.data.qpos[self.walk_qadr]
+        v_leg = self.data.qvel[self.walk_vadr]
+        self.data.ctrl[self.walk_aid] = (self.walk_target - q_leg) * WALK_KPS - v_leg * WALK_KDS
+        # Stiff PD on everything else so the arms/waist behave like the
+        # rigid torso the policy was trained with (soft gains let the
+        # upper body swing and destabilise the gait).
         for name, actuator in self.actuator_ids.items():
+            if name in self.walk_leg_set:
+                continue
             finger = "_hand_" in name
-            kp, kd = (3.0, 0.18) if finger else (35.0, 1.8)
-            limit = 0.9 if finger else 18.0
+            kp, kd = (3.0, 0.18) if finger else (150.0, 4.0)
+            limit = 0.9 if finger else 60.0
             torque = kp * (self.target[name] - self.qpos(name)) - kd * self.qvel(name)
             self.data.ctrl[actuator] = max(-limit, min(limit, torque))
+
+    def walk_cmd(self):
+        age = (self.get_clock().now() - self.last_cmd_time).nanoseconds * 1e-9
+        if age > CMD_TIMEOUT:
+            vx = vy = wz = 0.0
+        else:
+            vx = max(-0.35, min(0.35, float(self.cmd_vel.linear.x)))
+            vy = max(-0.25, min(0.25, float(self.cmd_vel.linear.y)))
+            wz = max(-0.8, min(0.8, float(self.cmd_vel.angular.z)))
+        # Walking: real contacts stop the base at the physical obstacles,
+        # so the guard only zeroes commands right at the physical AABBs.
+        blocker_name = self.nav_pose_blocked_in(
+            self.walk_blockers if self.walk else self.nav_blockers,
+            self.base_x, self.base_y)
+        if blocker_name:
+            self.maybe_log_nav_collision(blocker_name)
+            return np.zeros(3, dtype=np.float32)
+        # Velocity servo: correct the policy's standstill drift and gain
+        # error against the filtered measured body twist.
+        if abs(vx) < 1e-3 and abs(vy) < 1e-3 and abs(wz) < 1e-3:
+            # Idle: anchor and hold the pose against the policy's creep.
+            if self.walk_hold is None:
+                self.walk_hold = (self.base_x, self.base_y, self.base_yaw)
+            hx, hy, hyaw = self.walk_hold
+            ex, ey = hx - self.base_x, hy - self.base_y
+            cos_yaw = math.cos(self.base_yaw)
+            sin_yaw = math.sin(self.base_yaw)
+            body_x = ex * cos_yaw + ey * sin_yaw
+            body_y = -ex * sin_yaw + ey * cos_yaw
+            eyaw = math.atan2(math.sin(hyaw - self.base_yaw), math.cos(hyaw - self.base_yaw))
+            vx = max(-WALK_HOLD_XY_CLIP, min(WALK_HOLD_XY_CLIP, WALK_HOLD_XY_GAIN * body_x))
+            vy = max(-WALK_HOLD_XY_CLIP, min(WALK_HOLD_XY_CLIP, WALK_HOLD_XY_GAIN * body_y))
+            wz = max(-WALK_HOLD_YAW_CLIP, min(WALK_HOLD_YAW_CLIP, WALK_HOLD_YAW_GAIN * eyaw))
+        else:
+            self.walk_hold = None
+            vx += WALK_VEL_SERVO_GAIN * (vx - self.walk_vx_filt)
+            vy += WALK_VEL_SERVO_GAIN * (vy - self.walk_vy_filt)
+            wz += WALK_VEL_SERVO_GAIN * (wz - self.walk_wz_filt)
+        return np.array([
+            max(-1.0, min(1.0, vx)),
+            max(-1.0, min(1.0, vy)),
+            max(-1.0, min(1.0, wz)),
+        ], dtype=np.float32)
+
+    def infer_walk_policy(self):
+        obs = self.walk_obs
+        q_leg = self.data.qpos[self.walk_qadr]
+        v_leg = self.data.qvel[self.walk_vadr]
+        obs[:3] = self.data.qvel[3:6] * WALK_ANG_VEL_SCALE
+        qw, qx, qy, qz = self.data.qpos[3:7]
+        obs[3] = 2.0 * (-qz * qx + qw * qy)
+        obs[4] = -2.0 * (qz * qy + qw * qx)
+        obs[5] = 1.0 - 2.0 * (qw * qw + qz * qz)
+        obs[6:9] = self.walk_cmd() * WALK_CMD_SCALE
+        obs[9:21] = q_leg - WALK_DEFAULT_ANGLES
+        obs[21:33] = v_leg * WALK_DOF_VEL_SCALE
+        obs[33:45] = self.walk_action
+        phase = ((self.step_count * self.model.opt.timestep) % WALK_GAIT_PERIOD) / WALK_GAIT_PERIOD
+        obs[45] = math.sin(2.0 * math.pi * phase)
+        obs[46] = math.cos(2.0 * math.pi * phase)
+        import torch
+        with torch.no_grad():
+            self.walk_action = self.walk_policy(
+                torch.from_numpy(obs).unsqueeze(0)).detach().numpy().squeeze()
+        self.walk_target = self.walk_action * WALK_ACTION_SCALE + WALK_DEFAULT_ANGLES
+
+    def update_walk_odom(self):
+        qpos = self.data.qpos
+        x, y = float(qpos[0]), float(qpos[1])
+        qw, qx, qy, qz = qpos[3:7]
+        yaw = math.atan2(2.0 * (qw * qz + qx * qy), 1.0 - 2.0 * (qy * qy + qz * qz))
+        dt = float(self.model.opt.timestep)
+        dx, dy = x - self.base_x, y - self.base_y
+        cos_yaw = math.cos(self.base_yaw)
+        sin_yaw = math.sin(self.base_yaw)
+        self.odom_vx = (dx * cos_yaw + dy * sin_yaw) / dt
+        self.odom_vy = (-dx * sin_yaw + dy * cos_yaw) / dt
+        dyaw = math.atan2(math.sin(yaw - self.base_yaw), math.cos(yaw - self.base_yaw))
+        self.odom_wz = dyaw / dt
+        self.base_x, self.base_y, self.base_yaw = x, y, yaw
+        self.base_z = float(qpos[2])
+        # Low-pass the finite-difference twist for the velocity servo.
+        alpha = dt / (dt + WALK_VEL_FILTER_TAU)
+        self.walk_vx_filt += alpha * (self.odom_vx - self.walk_vx_filt)
+        self.walk_vy_filt += alpha * (self.odom_vy - self.walk_vy_filt)
+        self.walk_wz_filt += alpha * (self.odom_wz - self.walk_wz_filt)
+        if qpos[2] < WALK_FALL_Z:
+            now_sec = self.get_clock().now().nanoseconds * 1e-9
+            if now_sec - self.last_fall_log_time > 1.0:
+                self.last_fall_log_time = now_sec
+                self.get_logger().error(
+                    f"Walking policy fell: pelvis z={qpos[2]:.2f} below {WALK_FALL_Z}")
+
+    def step(self):
+        if self.walk:
+            self.control_walk()
+        else:
+            self.integrate_base()
+            self.apply_base_pose()
+            for name, actuator in self.actuator_ids.items():
+                finger = "_hand_" in name
+                kp, kd = (3.0, 0.18) if finger else (35.0, 1.8)
+                limit = 0.9 if finger else 18.0
+                torque = kp * (self.target[name] - self.qpos(name)) - kd * self.qvel(name)
+                self.data.ctrl[actuator] = max(-limit, min(limit, torque))
         mujoco.mj_step(self.model, self.data)
-        self.apply_base_pose()
+        if self.walk:
+            self.update_walk_odom()
+        else:
+            self.apply_base_pose()
         mujoco.mj_forward(self.model, self.data)
         self.step_count += 1
+        if self.walk and self.step_count % WALK_CONTROL_DECIMATION == 0:
+            self.infer_walk_policy()
         if self.step_count % ODOM_PERIOD_STEPS == 0:
             stamp = self.get_clock().now().to_msg()
             self.publish_odom(stamp)
