@@ -21,6 +21,36 @@ WALL_HEIGHT = 2.5
 NAV_SCAN_GROUP = "2"
 
 
+def ensure_ground_grid_material(root):
+    asset = root.find("asset")
+    if asset is None:
+        asset = ET.Element("asset")
+        world_index = next((index for index, child in enumerate(root) if child.tag == "worldbody"), len(root))
+        root.insert(world_index, asset)
+    if asset.find("material[@name='groundplane']") is not None:
+        return "groundplane"
+    if asset.find("texture[@name='ground_grid']") is None:
+        ET.SubElement(asset, "texture", {
+            "type": "2d",
+            "name": "ground_grid",
+            "builtin": "checker",
+            "mark": "edge",
+            "rgb1": "0.24 0.30 0.36",
+            "rgb2": "0.14 0.20 0.26",
+            "markrgb": "0.75 0.80 0.85",
+            "width": "300",
+            "height": "300",
+        })
+    ET.SubElement(asset, "material", {
+        "name": "ground_grid",
+        "texture": "ground_grid",
+        "texuniform": "true",
+        "texrepeat": "6 6",
+        "reflectance": "0.15",
+    })
+    return "ground_grid"
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("source", type=Path)
@@ -39,6 +69,7 @@ def main():
     world = root.find("worldbody")
     if world is None:
         raise RuntimeError("official model has no worldbody")
+    ground_material = ensure_ground_grid_material(root)
     # This is a hand-contact and navigation bench, not a whole-body balance
     # controller. Keep the official floating base joint so the ROS/Nav2 adapter
     # can kinematically move the visible robot in MuJoCo, while gravity
@@ -87,7 +118,9 @@ def main():
         "fovy": "69",
     })
 
-    ET.SubElement(world, "geom", {"name": "ground", "type": "plane", "size": "3 3 0.1", "contype": "8", "conaffinity": "4", "rgba": "0.25 0.25 0.25 1"})
+    ET.SubElement(world, "geom", {
+        "name": "ground", "type": "plane", "size": "3 3 0.1",
+        "contype": "8", "conaffinity": "4", "material": ground_material})
     wall_z = WALL_HEIGHT * 0.5
     ET.SubElement(world, "geom", {
         "name": "nav_wall_north", "type": "box",

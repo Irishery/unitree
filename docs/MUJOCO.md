@@ -1,18 +1,17 @@
 # MuJoCo DEX3 contact grasp
 
 MuJoCo-стенд запускается отдельно от Gazebo. По умолчанию это сейчас
-навигационный стенд A → B: SLAM/Nav2/RViz включены, а распознавание и захват
-коробки не стартуют.
+навигационный стенд A → B: SLAM/Nav2 включены, RViz запускается отдельно, а
+распознавание и захват коробки не стартуют.
 
 ```bash
 ./scripts/mujoco_build.sh
 ./scripts/mujoco_up.sh
 ```
 
-По умолчанию вместе с окном MuJoCo запускается RViz. В нём отображаются модель
-G1, `/scan`, карта, costmaps и Nav2 Goal. Виртуальная грудная RGB-D камера
-остаётся доступной для последующего tabletop-pick режима. Для камеры публикуются
-RealSense-совместимые топики:
+По умолчанию вместе с окном MuJoCo RViz больше не запускается. Виртуальная
+грудная RGB-D камера остаётся доступной для последующего tabletop-pick режима.
+Для камеры публикуются RealSense-совместимые топики:
 
 ```text
 /camera/camera/color/image_raw
@@ -41,9 +40,19 @@ mid360_scan -> /mid360/points + /scan -> SLAM Toolbox -> /map -> Nav2 -> /cmd_ve
 контакт. Близкая сцена со столом и коробкой для захвата включается только через
 `tabletop_pick:=true`.
 
-По умолчанию `./scripts/mujoco_up.sh` запускает SLAM, Nav2 и RViz. В RViz
-используйте инструмент `Nav2 Goal`; отображаются `map`, `/scan`, global/local
-costmap и `/plan`.
+По умолчанию `./scripts/mujoco_up.sh` запускает SLAM и Nav2, но не RViz.
+RViz открывайте отдельным скриптом:
+
+```bash
+./scripts/mujoco_rviz.sh
+```
+
+В RViz используйте инструмент `Navigation2 Goal`; в nav-профиле отображаются
+online SLAM `/map`, `/scan`, global/local costmap, `/plan`, footprint и
+Navigation 2 panel. Это та самая стандартная 2D-карта, которая рисуется по
+lidar/scan и запоминается SLAM Toolbox во время движения. `RVIZ_PROFILE=lite`
+показывает тот же 2D Nav2-набор, но с облегчённой овальной моделью робота.
+`RVIZ_PROFILE=full` оставлен для 3D-осмотра модели и облаков.
 
 Для навигационной проверки с GUI на ноутбуке лучше сначала отключить RGB-D
 renderer, если камера не нужна в этом прогоне:
@@ -52,18 +61,21 @@ renderer, если камера не нужна в этом прогоне:
 ./scripts/mujoco_up.sh publish_camera:=false
 ```
 
-MuJoCo viewer и RViz останутся включены, но D435i image/depth/points не будут
+MuJoCo viewer останется включён, но D435i image/depth/points не будут
 рендериться каждый кадр. Это снижает задержки TF/scan, из-за которых Nav2 может
 сорвать цель под нагрузкой.
 
-Если RViz в Docker падает с `failed to create drawable` или `exit code -11`,
-оставьте только окно MuJoCo:
+Если нужно вернуть старое поведение и поднять RViz из того же launch-файла:
 
 ```bash
-./scripts/mujoco_up.sh publish_camera:=false rviz:=false
+./scripts/mujoco_up.sh rviz:=true
 ```
 
-Nav2/SLAM при этом продолжают работать, а цель можно отправлять тем же
+Но для обычной отладки лучше держать MuJoCo и RViz в разных терминалах. Если
+RViz в Docker падает с `failed to create drawable` или `exit code -11`, просто
+закройте отдельный RViz-контейнер; MuJoCo/Nav2 продолжат работать.
+
+Цель можно отправлять тем же
 `./scripts/mujoco_nav_goal.sh X Y`.
 
 RViz можно запустить отдельным контейнером поверх уже работающего MuJoCo/Nav2:
@@ -72,23 +84,27 @@ RViz можно запустить отдельным контейнером п�
 ./scripts/mujoco_rviz.sh
 ```
 
-По умолчанию скрипт открывает безопасный профиль `RVIZ_PROFILE=nav`: модель G1,
-SLAM map, `/scan`, costmaps и `/plan`, но без RGB/PointCloud виджетов. Полный
-профиль с D435i-панелями можно попробовать отдельно:
+По умолчанию скрипт открывает стандартный 2D Nav2-профиль `RVIZ_PROFILE=nav`:
+модель G1, SLAM map, `/scan`, global/local costmaps, footprint, `/plan` и
+Navigation 2 panel. Полный 3D-профиль с D435i-панелями можно попробовать
+отдельно:
 
 ```bash
 RVIZ_PROFILE=full ./scripts/mujoco_rviz.sh
 ```
 
-Для слабых машин (software GL / llvmpipe) есть лёгкий профиль со скелетной
-моделью робота (сферы вместо 51 текстурированного меша, вдвое меньше память):
+Для слабых машин (software GL / llvmpipe) есть лёгкий профиль с тем же 2D
+Nav2-видом карты/костмапов, но с овальной моделью робота вместо тяжёлых meshes
+(капсулы/простые примитивы вместо 51 текстурированного меша):
 
 ```bash
 RVIZ_PROFILE=lite ./scripts/mujoco_rviz.sh
 ```
 
-Скелетная модель публикуется `description_relay` на `/robot_description_lite`.
-MuJoCo-вьювер тоже можно разгрузить — без теней и текстур:
+Овальная модель публикуется `description_relay` на `/robot_description_lite`.
+MuJoCo-вьювер тоже можно разгрузить: в `viewer_lite` тяжёлые robot meshes
+прячутся, робот рисуется овалами/капсулами, тени отключаются, а checker-сетка
+пола остаётся включённой:
 
 ```bash
 ./scripts/mujoco_up.sh viewer_lite:=true

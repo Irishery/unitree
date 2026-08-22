@@ -33,7 +33,7 @@ def generate_launch_description():
         DeclareLaunchArgument("viewer", default_value="true"),
         DeclareLaunchArgument("viewer_lite", default_value="false"),
         DeclareLaunchArgument("walk", default_value="false"),
-        DeclareLaunchArgument("rviz", default_value="true"),
+        DeclareLaunchArgument("rviz", default_value="false"),
         DeclareLaunchArgument("publish_camera", default_value="true"),
         DeclareLaunchArgument("navigation", default_value="true"),
         DeclareLaunchArgument("slam", default_value="true"),

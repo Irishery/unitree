@@ -30,8 +30,12 @@ def generate_launch_description():
             "behavior_server.ros__parameters.robot_base_frame": "base_footprint",
             "collision_monitor.ros__parameters.base_frame_id": "base_footprint",
             "docking_server.ros__parameters.base_frame": "base_footprint",
-            "local_costmap.local_costmap.ros__parameters.robot_radius": "0.18",
-            "global_costmap.global_costmap.ros__parameters.robot_radius": "0.18",
+            # Use a conservative humanoid/base envelope rather than the pelvis
+            # mesh radius.  In walk mode the policy swings/holds the arms, and
+            # a too-small footprint lets Nav2 skim the table closely enough
+            # for the hands to snag in MuJoCo.
+            "local_costmap.local_costmap.ros__parameters.robot_radius": "0.30",
+            "global_costmap.global_costmap.ros__parameters.robot_radius": "0.30",
             # The MuJoCo GUI + RViz path can run slower than headless on a
             # laptop.  Keep Nav2 tolerant to scan/TF processing jitter so a
             # short viewer/render hiccup does not abort an otherwise valid
@@ -98,11 +102,25 @@ def generate_launch_description():
             "behavior_server.ros__parameters.max_rotational_vel": "0.75",
             "behavior_server.ros__parameters.min_rotational_vel": "0.15",
             "behavior_server.ros__parameters.rotational_acc_lim": "1.2",
-            # Include the high-mounted Mid-360 scan origin in the local voxel
-            # layer height window.  The MuJoCo scan frame is mounted on the
-            # head/torso, matching the real robot, so this spans 0.60..1.40 m
-            # relative to base_footprint.
-            "local_costmap.local_costmap.ros__parameters.voxel_layer.origin_z": "0.6",
+            # The 2D /scan is kept for SLAM/global planning, but the local
+            # voxel layer must use the real 3D Mid-360 cloud.  If a LaserScan
+            # feeds VoxelLayer, Nav2 has no hit height and marks obstacles at
+            # the head-mounted lidar origin; a table then appears near the
+            # head in /local_costmap/voxel_points instead of at hip/table
+            # height.
+            "local_costmap.local_costmap.ros__parameters.voxel_layer.observation_sources": "mid360_points",
+            "local_costmap.local_costmap.ros__parameters.voxel_layer.mid360_points.topic": "/mid360/points",
+            "local_costmap.local_costmap.ros__parameters.voxel_layer.mid360_points.data_type": "PointCloud2",
+            "local_costmap.local_costmap.ros__parameters.voxel_layer.mid360_points.marking": "true",
+            "local_costmap.local_costmap.ros__parameters.voxel_layer.mid360_points.clearing": "true",
+            "local_costmap.local_costmap.ros__parameters.voxel_layer.mid360_points.min_obstacle_height": "0.20",
+            "local_costmap.local_costmap.ros__parameters.voxel_layer.mid360_points.max_obstacle_height": "1.60",
+            "local_costmap.local_costmap.ros__parameters.voxel_layer.mid360_points.obstacle_min_range": "0.0",
+            "local_costmap.local_costmap.ros__parameters.voxel_layer.mid360_points.obstacle_max_range": "3.0",
+            "local_costmap.local_costmap.ros__parameters.voxel_layer.mid360_points.raytrace_min_range": "0.0",
+            "local_costmap.local_costmap.ros__parameters.voxel_layer.mid360_points.raytrace_max_range": "3.5",
+            "local_costmap.local_costmap.ros__parameters.voxel_layer.origin_z": "0.0",
+            "local_costmap.local_costmap.ros__parameters.voxel_layer.z_resolution": "0.1",
             "local_costmap.local_costmap.ros__parameters.voxel_layer.z_voxels": "16",
         },
         convert_types=True,

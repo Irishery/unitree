@@ -9,10 +9,8 @@ Visualization Manager:
     # NOTE: no rviz_default_plugins/Map displays here on purpose.  RViz's
     # Map swatch rendering (indexed_8bit_image shader + vertex buffers)
     # crashes the whole GL context on this laptop's Mesa/amdgpu stack,
-    # both with hardware GL and with llvmpipe.  The 2D nav profile
-    # (g1_mujoco_nav.rviz) keeps the map/costmap panels when the machine
-    # renders them correctly; this 3D profile shows the collision data as
-    # the voxel point cloud instead.
+    # both with hardware GL and with llvmpipe.  Use RVIZ_PROFILE=nav for the
+    # standard 2D Nav2 map/costmap view.
     - Class: rviz_default_plugins/Grid
       Enabled: true
       Name: Grid
