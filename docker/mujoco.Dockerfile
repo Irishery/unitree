@@ -15,6 +15,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       stable-baselines3==2.5.0
 
 COPY vendor/g1_description /opt/unitree_ros/robots/g1_description
+COPY docker/unitree_api_stub /ws/src/unitree_api
 COPY src/g1_mujoco /ws/src/g1_mujoco
 COPY models/walk /ws/models/walk
 RUN python3 /ws/src/g1_mujoco/scripts/prepare_mjcf.py \
@@ -24,7 +25,7 @@ RUN python3 /ws/src/g1_mujoco/scripts/prepare_mjcf.py \
       /opt/unitree_ros/robots/g1_description/g1_29dof_with_hand_rev_1_0.xml \
       /opt/unitree_ros/robots/g1_description/g1_29dof_with_dex3_nav.xml \
     && . /opt/ros/jazzy/setup.sh \
-    && cd /ws && colcon build --symlink-install --packages-select g1_mujoco \
+    && cd /ws && colcon build --symlink-install --packages-up-to g1_mujoco \
     && for mesh in /opt/unitree_ros/robots/g1_description/meshes/*.STL; do \
          assimp export "$mesh" "${mesh%.STL}.dae" >/dev/null; \
        done \

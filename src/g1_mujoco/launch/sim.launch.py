@@ -20,6 +20,10 @@ def generate_launch_description():
     publish_camera = LaunchConfiguration("publish_camera")
     slam = LaunchConfiguration("slam")
     tabletop_pick = LaunchConfiguration("tabletop_pick")
+    loco_api = LaunchConfiguration("loco_api")
+    loco_api_bridge = LaunchConfiguration("loco_api_bridge")
+    sim_cmd_vel_topic = LaunchConfiguration("sim_cmd_vel_topic")
+    sim_smoothed_cmd_vel_topic = LaunchConfiguration("sim_smoothed_cmd_vel_topic")
     # RViz resolves package:// resources through the ament index more reliably
     # than a bind-mounted file URI.  The image build installs these meshes in
     # g1_mujoco's share directory.
@@ -38,6 +42,14 @@ def generate_launch_description():
         DeclareLaunchArgument("navigation", default_value="true"),
         DeclareLaunchArgument("slam", default_value="true"),
         DeclareLaunchArgument("tabletop_pick", default_value="false"),
+        DeclareLaunchArgument("loco_api", default_value="false"),
+        DeclareLaunchArgument("loco_api_cmd_vel_topic", default_value="/cmd_vel"),
+        DeclareLaunchArgument("loco_api_require_start", default_value="false"),
+        DeclareLaunchArgument("loco_api_bridge", default_value="false"),
+        DeclareLaunchArgument("loco_api_bridge_cmd_vel_topic", default_value="/cmd_vel"),
+        DeclareLaunchArgument("loco_api_bridge_request_topic", default_value="/api/sport/request"),
+        DeclareLaunchArgument("sim_cmd_vel_topic", default_value="/cmd_vel"),
+        DeclareLaunchArgument("sim_smoothed_cmd_vel_topic", default_value="/cmd_vel_smoothed"),
         Node(
             package="g1_mujoco",
             executable="sim",
@@ -49,7 +61,31 @@ def generate_launch_description():
                 "publish_camera": publish_camera,
                 "tabletop_pick": tabletop_pick,
                 "walk": LaunchConfiguration("walk"),
+                "cmd_vel_topic": sim_cmd_vel_topic,
+                "smoothed_cmd_vel_topic": sim_smoothed_cmd_vel_topic,
             }],
+        ),
+        Node(
+            package="g1_mujoco",
+            executable="loco_api_sim",
+            name="g1_loco_api_sim",
+            condition=IfCondition(loco_api),
+            parameters=[{
+                "cmd_vel_topic": LaunchConfiguration("loco_api_cmd_vel_topic"),
+                "require_start": LaunchConfiguration("loco_api_require_start"),
+            }],
+            output="screen",
+        ),
+        Node(
+            package="g1_mujoco",
+            executable="cmd_vel_loco_bridge",
+            name="g1_cmd_vel_loco_bridge",
+            condition=IfCondition(loco_api_bridge),
+            parameters=[{
+                "cmd_vel_topic": LaunchConfiguration("loco_api_bridge_cmd_vel_topic"),
+                "request_topic": LaunchConfiguration("loco_api_bridge_request_topic"),
+            }],
+            output="screen",
         ),
         Node(
             package="robot_state_publisher",

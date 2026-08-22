@@ -9,6 +9,65 @@ MuJoCo-стенд запускается отдельно от Gazebo. По ум
 ./scripts/mujoco_up.sh
 ```
 
+Если нужно проверить железо-совместимый high-level locomotion API, включите
+эмулятор Unitree `/api/sport/request`:
+
+```bash
+./scripts/mujoco_up.sh loco_api:=true
+```
+
+Он принимает тот же ROS 2 wire contract, что реальный G1 `LocoClient`, и
+отвечает в `/api/sport/response`. Поддерживаемый минимум: FSM/state queries,
+`SetFsmId`, `SetBalanceMode`, `SetSwingHeight`, `SetStandHeight`,
+`SetSpeedMode`, `SetVelocity` (`7105`) и stop/stand/move aliases. Внутри
+симуляции это переводится в `geometry_msgs/Twist`; закрытый firmware-контроллер
+Unitree в MuJoCo не запускается.
+
+Ручной smoke-test:
+
+```bash
+./scripts/mujoco_loco_request.sh start
+./scripts/mujoco_loco_request.sh move 0.15 0.0 0.0 1.0
+./scripts/mujoco_loco_request.sh stop
+```
+
+Для более строгой проверки без прямого `/cmd_vel`-bypass можно запустить
+симулятор так, чтобы он слушал только командный топик API-адаптера:
+
+```bash
+./scripts/mujoco_up.sh \
+  loco_api:=true \
+  loco_api_cmd_vel_topic:=/g1/sim/cmd_vel \
+  sim_cmd_vel_topic:=/g1/sim/cmd_vel \
+  sim_smoothed_cmd_vel_topic:=/g1/sim/cmd_vel_smoothed
+```
+
+Полная hardware-like цепочка с Nav2 включается отдельным скриптом:
+
+```bash
+./scripts/mujoco_loco_nav_up.sh viewer_lite:=true publish_camera:=false
+RVIZ_PROFILE=lite ./scripts/mujoco_rviz.sh
+```
+
+В этом режиме `Navigation2 Goal` в RViz больше не управляет MuJoCo напрямую:
+
+```text
+RViz/Nav2 Goal
+  -> Nav2 /cmd_vel
+  -> g1_cmd_vel_loco_bridge
+  -> /api/sport/request
+  -> g1_loco_api_sim
+  -> /g1/sim/cmd_vel
+  -> MuJoCo odom/tf
+```
+
+Если нужна динамическая walking-policy вместо кинематического перемещения базы,
+добавьте `walk:=true`:
+
+```bash
+./scripts/mujoco_loco_nav_up.sh walk:=true viewer_lite:=true publish_camera:=false
+```
+
 По умолчанию вместе с окном MuJoCo RViz больше не запускается. Виртуальная
 грудная RGB-D камера остаётся доступной для последующего tabletop-pick режима.
 Для камеры публикуются RealSense-совместимые топики:
@@ -133,8 +192,12 @@ RVIZ_PROFILE=lite ./scripts/mujoco_rviz.sh
   значениям legged_gym;
 - `/cmd_vel` → скорость policy (vx, vy, wz), inference 50 Гц, PD 500 Гц;
 - `/odom` и TF строятся из фактического корня физики;
-- локальный velocity-серво компенсирует дрейт policy на месте и ошибку
-  усиления скорости (политика обучена на 12-DoF теле без рук).
+- когда входной `cmd_vel` нулевой дольше короткой задержки, policy не
+  вызывается: ноги удерживаются PD-контроллером в дефолтной стойке, а
+  floating-base фиксируется как симуляционный “park brake”, чтобы робот не
+  “перетаптывался” и не падал без отдельной stand-policy;
+- локальный velocity-серво компенсирует ошибку усиления скорости во время
+  движения (политика обучена на 12-DoF теле без рук).
 
 Ограничения: `walk` несовместим с `tabletop_pick`; робот физически не
 сталкивается со столом/стенами (как и раньше — их держит costmap/Nav2);
@@ -242,10 +305,12 @@ Nav2 feedback с текущей позой и оставшейся дистан�
 объектов. Плоский `/scan` используется этим слоем только для очистки лучами и
 отдельно остаётся входом SLAM Toolbox.
 
-Важное ограничение: в MuJoCo `/cmd_vel` пока двигает базу кинематически в ROS
-TF/odom, а не включает динамическую ходьбу G1. Это сделано, чтобы отладить
-SLAM/Nav2/RViz и интерфейс управления на том же топик-контракте, что и Gazebo.
-Контактный tabletop grasp при этом остаётся физическим MuJoCo-стендом:
+Важное ограничение: без `walk:=true` MuJoCo `/cmd_vel` двигает базу
+кинематически в ROS TF/odom. С `walk:=true` ноги ведёт locomotion-policy, но
+это всё ещё симуляционный bringup; idle park-brake нужен только MuJoCo. На
+реальном G1 стояние и ходьба должны переключаться через штатные Unitree
+FSM/API, а не через этот MuJoCo-bypass.
+Контактный tabletop grasp остаётся отдельным физическим MuJoCo-стендом:
 коробка свободная, без `attach`/`weld`.
 
 Визуальная модель в окне MuJoCo тоже следует этой кинематической базе через

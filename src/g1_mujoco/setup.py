@@ -28,5 +28,7 @@ setup(
         "evaluate_rl = g1_mujoco.evaluate_rl:main",
         "voxel_grid_relay = g1_mujoco.voxel_grid_relay:main",
         "description_relay = g1_mujoco.description_relay:main",
+        "loco_api_sim = g1_mujoco.loco_api_sim:main",
+        "cmd_vel_loco_bridge = g1_mujoco.cmd_vel_loco_bridge:main",
     ]},
 )

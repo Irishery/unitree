@@ -44,10 +44,31 @@ physical G1 bridge:
 | `/map` | `nav_msgs/msg/OccupancyGrid` | Online map from SLAM Toolbox |
 | `/plan` | `nav_msgs/msg/Path` | Current Nav2 global plan |
 | `/cmd_vel` | `geometry_msgs/msg/Twist` | Final Nav2/collision-monitor velocity command to the active simulator |
+| `/api/sport/request` | `unitree_api/msg/Request` | Optional simulated G1 high-level locomotion API input |
+| `/api/sport/response` | `unitree_api/msg/Response` | Optional simulated response to high-level locomotion API calls |
 
 The physical Mid-360 and physical odometry need hardware-specific drivers and
 must not be replaced with these simulation sources. In MuJoCo, `/cmd_vel` is a
 navigation-interface test path rather than a dynamic walking controller.
+
+When MuJoCo is launched with `loco_api:=true`, `g1_loco_api_sim` accepts a
+small hardware-compatible subset of G1 LocoClient requests: FSM/state queries,
+`SetFsmId`, `SetBalanceMode`, `SetSwingHeight`, `SetStandHeight`,
+`SetSpeedMode`, `SetVelocity` (`7105`), and stop/stand/move aliases from the
+generic sport API. This emulates the ROS 2 wire contract only; it is not the
+closed firmware locomotion controller from the physical robot.
+
+For a full Nav2-through-API simulation, launch `scripts/mujoco_loco_nav_up.sh`.
+That route keeps MuJoCo off direct `/cmd_vel` and uses:
+
+```text
+Nav2 /cmd_vel
+  -> g1_cmd_vel_loco_bridge
+  -> /api/sport/request
+  -> g1_loco_api_sim
+  -> /g1/sim/cmd_vel
+  -> MuJoCo
+```
 
 ## Real DEX3-1 hands
 

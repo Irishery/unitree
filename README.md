@@ -98,6 +98,30 @@ MuJoCo-стенд также поднимает SLAM Toolbox, Nav2, `/scan`, `/o
 динамическая ходьба; это слой для проверки ROS2 GUI/SLAM/Nav2-контракта перед
 переносом на Gazebo или физический G1.
 
+Для подготовки к железу MuJoCo можно запустить с эмуляцией родного G1
+high-level locomotion API:
+
+```bash
+./scripts/mujoco_up.sh loco_api:=true
+./scripts/mujoco_loco_request.sh start
+./scripts/mujoco_loco_request.sh move 0.15 0.0 0.0 1.0
+./scripts/mujoco_loco_request.sh stop
+```
+
+Это проверяет ROS 2 wire contract `/api/sport/request` →
+`/api/sport/response`; закрытый firmware-контроллер Unitree в MuJoCo при этом
+не запускается.
+
+Полная проверка Nav2 через этот hardware-like API:
+
+```bash
+./scripts/mujoco_loco_nav_up.sh viewer_lite:=true publish_camera:=false
+RVIZ_PROFILE=lite ./scripts/mujoco_rviz.sh
+```
+
+Цепочка будет такой: `Nav2 /cmd_vel → /api/sport/request → MuJoCo`, как
+подготовка к замене sim-адаптера настоящим G1 high-level locomotion service.
+
 ## 1. Подготовка робота (Ubuntu 22.04 / Humble)
 
 Установить ROS 2 Humble, затем зависимости:

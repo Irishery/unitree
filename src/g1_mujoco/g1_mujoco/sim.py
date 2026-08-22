@@ -129,6 +129,14 @@ WALK_HOLD_XY_GAIN = 0.8
 WALK_HOLD_YAW_GAIN = 1.0
 WALK_HOLD_XY_CLIP = 0.15
 WALK_HOLD_YAW_CLIP = 0.3
+# The pretrained locomotion policy is a gait controller: even at zero command
+# its phase input keeps asking the legs to perform a dynamic stand/walk cycle.
+# For a robot waiting for a Nav2 goal, bypass the policy after a short zero-cmd
+# grace period and hold the default leg pose.  Because this repository does not
+# include a separate static-balance policy, idle simulation also anchors the
+# floating base as a park brake; motion commands release it.
+WALK_STAND_CMD_EPS = 1e-3
+WALK_STAND_DELAY = 0.35
 LITE_HIDDEN_MESH_GROUP = "4"
 LITE_VISIBLE_OVAL_GROUP = "1"
 LITE_RGBA_LIGHT = "0.70 0.70 0.70 1"
@@ -154,6 +162,8 @@ class G1Mujoco(Node):
         self.declare_parameter("tabletop_pick", False)
         self.declare_parameter("walk", False)
         self.declare_parameter("walk_policy", WALK_POLICY_PATH)
+        self.declare_parameter("cmd_vel_topic", "/cmd_vel")
+        self.declare_parameter("smoothed_cmd_vel_topic", "/cmd_vel_smoothed")
         self.tabletop_pick = bool(self.get_parameter("tabletop_pick").value)
         self.walk = bool(self.get_parameter("walk").value)
         self.viewer_lite = bool(self.get_parameter("viewer_lite").value)
@@ -257,8 +267,13 @@ class G1Mujoco(Node):
         # /cmd_vel.  Prefer final /cmd_vel so obstacle-stop decisions are not
         # bypassed; keep /cmd_vel_smoothed only as a fallback when the monitor
         # is not running.
-        self.create_subscription(Twist, "/cmd_vel", self.set_cmd_vel, 10)
-        self.create_subscription(Twist, "/cmd_vel_smoothed", self.set_smoothed_cmd_vel, 10)
+        cmd_vel_topic = str(self.get_parameter("cmd_vel_topic").value)
+        smoothed_cmd_vel_topic = str(self.get_parameter("smoothed_cmd_vel_topic").value)
+        self.cmd_vel_sub = self.create_subscription(Twist, cmd_vel_topic, self.set_cmd_vel, 10)
+        self.smoothed_cmd_vel_sub = None
+        if smoothed_cmd_vel_topic:
+            self.smoothed_cmd_vel_sub = self.create_subscription(
+                Twist, smoothed_cmd_vel_topic, self.set_smoothed_cmd_vel, 10)
         for name in self.names:
             self.create_subscription(Float64, f"/g1/mujoco/joints/{name}/command",
                                      lambda msg, joint=name: self.set_target(joint, msg.data), 10)
@@ -571,11 +586,16 @@ class G1Mujoco(Node):
         self.walk_vy_filt = 0.0
         self.walk_wz_filt = 0.0
         self.walk_hold = None
+        self.walk_static_stand = True
+        self.walk_stand_anchor = None
+        self.walk_last_nonzero_cmd_time = None
         self.last_fall_log_time = 0.0
         self.get_logger().info(
             "MuJoCo walk mode: Unitree 12-DoF locomotion policy drives the legs "
             f"(pd at 500 Hz, policy at {int(1.0 / (WALK_CONTROL_DECIMATION * self.model.opt.timestep))} Hz); "
-            "/cmd_vel is the velocity command and odom is derived from the physics root")
+            "/cmd_vel is the velocity command and odom is derived from the physics root; "
+            "zero cmd parks the simulated root and holds a static standing pose "
+            "instead of running the gait policy")
 
     def control_walk(self):
         # Policy PD on the legs.
@@ -594,14 +614,36 @@ class G1Mujoco(Node):
             torque = kp * (self.target[name] - self.qpos(name)) - kd * self.qvel(name)
             self.data.ctrl[actuator] = max(-limit, min(limit, torque))
 
-    def walk_cmd(self):
+    def raw_walk_cmd(self):
         age = (self.get_clock().now() - self.last_cmd_time).nanoseconds * 1e-9
         if age > CMD_TIMEOUT:
-            vx = vy = wz = 0.0
-        else:
-            vx = max(-0.35, min(0.35, float(self.cmd_vel.linear.x)))
-            vy = max(-0.25, min(0.25, float(self.cmd_vel.linear.y)))
-            wz = max(-0.8, min(0.8, float(self.cmd_vel.angular.z)))
+            return 0.0, 0.0, 0.0
+        return (
+            max(-0.35, min(0.35, float(self.cmd_vel.linear.x))),
+            max(-0.25, min(0.25, float(self.cmd_vel.linear.y))),
+            max(-0.8, min(0.8, float(self.cmd_vel.angular.z))),
+        )
+
+    def walk_cmd_is_idle(self, vx, vy, wz):
+        return (
+            abs(vx) < WALK_STAND_CMD_EPS
+            and abs(vy) < WALK_STAND_CMD_EPS
+            and abs(wz) < WALK_STAND_CMD_EPS
+        )
+
+    def walk_should_static_stand(self):
+        vx, vy, wz = self.raw_walk_cmd()
+        now = self.get_clock().now()
+        if not self.walk_cmd_is_idle(vx, vy, wz):
+            self.walk_last_nonzero_cmd_time = now
+            return False
+        if self.walk_last_nonzero_cmd_time is None:
+            return True
+        idle_age = (now - self.walk_last_nonzero_cmd_time).nanoseconds * 1e-9
+        return idle_age >= WALK_STAND_DELAY
+
+    def walk_cmd(self):
+        vx, vy, wz = self.raw_walk_cmd()
         # Walking: real contacts stop the base at the physical obstacles,
         # so the guard only zeroes commands right at the physical AABBs.
         blocker_name = self.nav_pose_blocked_in(
@@ -612,7 +654,7 @@ class G1Mujoco(Node):
             return np.zeros(3, dtype=np.float32)
         # Velocity servo: correct the policy's standstill drift and gain
         # error against the filtered measured body twist.
-        if abs(vx) < 1e-3 and abs(vy) < 1e-3 and abs(wz) < 1e-3:
+        if self.walk_cmd_is_idle(vx, vy, wz):
             # Idle: anchor and hold the pose against the policy's creep.
             if self.walk_hold is None:
                 self.walk_hold = (self.base_x, self.base_y, self.base_yaw)
@@ -686,9 +728,38 @@ class G1Mujoco(Node):
                 self.get_logger().error(
                     f"Walking policy fell: pelvis z={qpos[2]:.2f} below {WALK_FALL_Z}")
 
+    def static_stand_walk(self):
+        if not self.walk_static_stand or self.walk_stand_anchor is None:
+            self.walk_hold = (self.base_x, self.base_y, self.base_yaw)
+            self.walk_stand_anchor = (self.base_x, self.base_y, self.base_yaw, self.base_z)
+        self.walk_static_stand = True
+        self.walk_action[:] = 0.0
+        self.walk_target = WALK_DEFAULT_ANGLES.copy()
+
+    def apply_static_walk_root(self):
+        if self.base_qposadr is None or self.base_qveladr is None:
+            return
+        if self.walk_stand_anchor is None:
+            self.walk_stand_anchor = (self.base_x, self.base_y, self.base_yaw, self.base_z)
+        x, y, yaw, z = self.walk_stand_anchor
+        qpos = self.data.qpos
+        qvel = self.data.qvel
+        qpos[self.base_qposadr + 0] = x
+        qpos[self.base_qposadr + 1] = y
+        qpos[self.base_qposadr + 2] = z
+        qw, qx, qy, qz = yaw_to_mujoco_quaternion(yaw)
+        qpos[self.base_qposadr + 3] = qw
+        qpos[self.base_qposadr + 4] = qx
+        qpos[self.base_qposadr + 5] = qy
+        qpos[self.base_qposadr + 6] = qz
+        qvel[self.base_qveladr:self.base_qveladr + 6] = 0.0
+
     def step(self):
         if self.walk:
             self.control_walk()
+            if self.walk_static_stand:
+                self.static_stand_walk()
+                self.apply_static_walk_root()
         else:
             self.integrate_base()
             self.apply_base_pose()
@@ -700,13 +771,20 @@ class G1Mujoco(Node):
                 self.data.ctrl[actuator] = max(-limit, min(limit, torque))
         mujoco.mj_step(self.model, self.data)
         if self.walk:
+            if self.walk_static_stand:
+                self.apply_static_walk_root()
             self.update_walk_odom()
         else:
             self.apply_base_pose()
         mujoco.mj_forward(self.model, self.data)
         self.step_count += 1
         if self.walk and self.step_count % WALK_CONTROL_DECIMATION == 0:
-            self.infer_walk_policy()
+            if self.walk_should_static_stand():
+                self.static_stand_walk()
+            else:
+                self.walk_static_stand = False
+                self.walk_stand_anchor = None
+                self.infer_walk_policy()
         if self.step_count % ODOM_PERIOD_STEPS == 0:
             stamp = self.get_clock().now().to_msg()
             self.publish_odom(stamp)
