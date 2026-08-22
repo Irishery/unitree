@@ -102,23 +102,25 @@ def generate_launch_description():
             "behavior_server.ros__parameters.max_rotational_vel": "0.75",
             "behavior_server.ros__parameters.min_rotational_vel": "0.15",
             "behavior_server.ros__parameters.rotational_acc_lim": "1.2",
-            # The 2D /scan is kept for SLAM/global planning, but the local
-            # voxel layer must use the real 3D Mid-360 cloud.  If a LaserScan
-            # feeds VoxelLayer, Nav2 has no hit height and marks obstacles at
-            # the head-mounted lidar origin; a table then appears near the
-            # head in /local_costmap/voxel_points instead of at hip/table
-            # height.
-            "local_costmap.local_costmap.ros__parameters.voxel_layer.observation_sources": "mid360_points",
-            "local_costmap.local_costmap.ros__parameters.voxel_layer.mid360_points.topic": "/mid360/points",
-            "local_costmap.local_costmap.ros__parameters.voxel_layer.mid360_points.data_type": "PointCloud2",
-            "local_costmap.local_costmap.ros__parameters.voxel_layer.mid360_points.marking": "true",
-            "local_costmap.local_costmap.ros__parameters.voxel_layer.mid360_points.clearing": "true",
-            "local_costmap.local_costmap.ros__parameters.voxel_layer.mid360_points.min_obstacle_height": "0.20",
-            "local_costmap.local_costmap.ros__parameters.voxel_layer.mid360_points.max_obstacle_height": "1.60",
-            "local_costmap.local_costmap.ros__parameters.voxel_layer.mid360_points.obstacle_min_range": "0.0",
-            "local_costmap.local_costmap.ros__parameters.voxel_layer.mid360_points.obstacle_max_range": "3.0",
-            "local_costmap.local_costmap.ros__parameters.voxel_layer.mid360_points.raytrace_min_range": "0.0",
-            "local_costmap.local_costmap.ros__parameters.voxel_layer.mid360_points.raytrace_max_range": "3.5",
+            # Mark the 3D voxel grid from the actual PointCloud2 coordinates.
+            # Keep the planar LaserScan only as a clearing source: using it
+            # for marking puts every occupied voxel in the lidar's horizontal
+            # plane at head height.
+            "local_costmap.local_costmap.ros__parameters.voxel_layer.observation_sources": "scan points",
+            "local_costmap.local_costmap.ros__parameters.voxel_layer.scan.topic": "/scan",
+            "local_costmap.local_costmap.ros__parameters.voxel_layer.scan.data_type": "LaserScan",
+            "local_costmap.local_costmap.ros__parameters.voxel_layer.scan.clearing": "true",
+            "local_costmap.local_costmap.ros__parameters.voxel_layer.scan.marking": "false",
+            "local_costmap.local_costmap.ros__parameters.voxel_layer.points.topic": "/mid360/points",
+            "local_costmap.local_costmap.ros__parameters.voxel_layer.points.data_type": "PointCloud2",
+            "local_costmap.local_costmap.ros__parameters.voxel_layer.points.clearing": "false",
+            "local_costmap.local_costmap.ros__parameters.voxel_layer.points.marking": "true",
+            "local_costmap.local_costmap.ros__parameters.voxel_layer.points.min_obstacle_height": "0.05",
+            "local_costmap.local_costmap.ros__parameters.voxel_layer.points.max_obstacle_height": "1.6",
+            "local_costmap.local_costmap.ros__parameters.voxel_layer.points.obstacle_min_range": "0.0",
+            "local_costmap.local_costmap.ros__parameters.voxel_layer.points.obstacle_max_range": "3.0",
+            "local_costmap.local_costmap.ros__parameters.voxel_layer.scan.raytrace_min_range": "0.0",
+            "local_costmap.local_costmap.ros__parameters.voxel_layer.scan.raytrace_max_range": "3.5",
             "local_costmap.local_costmap.ros__parameters.voxel_layer.origin_z": "0.0",
             "local_costmap.local_costmap.ros__parameters.voxel_layer.z_resolution": "0.1",
             "local_costmap.local_costmap.ros__parameters.voxel_layer.z_voxels": "16",

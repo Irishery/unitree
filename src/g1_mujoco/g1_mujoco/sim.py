@@ -953,11 +953,16 @@ class G1Mujoco(Node):
                 distance = self.ray_scene_distance(origin, ray_world)
                 if not (SCAN_RANGE_MIN <= distance <= SCAN_RANGE_MAX):
                     continue
-                hit_local = ray_local * distance
-                points.append((float(hit_local[0]), float(hit_local[1]), float(hit_local[2])))
+                # mj_ray returns a distance along a ray expressed in the
+                # MuJoCo world frame.  Publish the actual world-space hit in
+                # odom rather than reconstructing it through the independently
+                # maintained URDF sensor TF in RViz.  The MuJoCo world and our
+                # odom frame share the same origin and axes.
+                hit_world = origin + ray_world * distance
+                points.append((float(hit_world[0]), float(hit_world[1]), float(hit_world[2])))
         cloud_header = Header()
         cloud_header.stamp = stamp
-        cloud_header.frame_id = "mid360_scan"
+        cloud_header.frame_id = "odom"
         self.mid360_points_pub.publish(point_cloud2.create_cloud_xyz32(cloud_header, points))
 
     def publish_state(self, stamp=None):
