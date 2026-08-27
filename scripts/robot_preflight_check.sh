@@ -54,8 +54,10 @@ candidate_setups() {
 setup_has_unitree_msgs() {
   local setup_file="$1"
   bash -lc "
+    set +u
     source /opt/ros/humble/setup.bash
     source '${setup_file}'
+    set -u
     ros2 pkg prefix unitree_hg >/dev/null
     ros2 pkg prefix unitree_api >/dev/null
     ros2 pkg prefix unitree_go >/dev/null
@@ -238,8 +240,10 @@ run_checks() {
 
   # Source ROS first. Unitree setup is selected dynamically below.
   if [ -f /opt/ros/humble/setup.bash ]; then
+    set +u
     # shellcheck disable=SC1091
     source /opt/ros/humble/setup.bash
+    set -u
   else
     echo "ERROR: /opt/ros/humble/setup.bash not found"
   fi
@@ -247,8 +251,10 @@ run_checks() {
   SELECTED_UNITREE_SETUP="$(select_unitree_setup || true)"
   export SELECTED_UNITREE_SETUP
   if [ -n "${SELECTED_UNITREE_SETUP}" ]; then
+    set +u
     # shellcheck disable=SC1090
     source "${SELECTED_UNITREE_SETUP}"
+    set -u
   fi
 
   run_checks
