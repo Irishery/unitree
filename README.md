@@ -164,18 +164,25 @@ source scripts/use_network.sh eth0 0   # заменить eth0 на фактич
 
 ## 3. Запуск bridge на роботе
 
-```bash
-source scripts/use_network.sh eth0 0
-ros2 launch g1_bridge bridge.launch.py
-```
-
-Убедиться, что native G1 данные пришли:
+Для первого запуска на физическом G1 используется отдельный telemetry-only
+launch. Он публикует модель, joint states, IMU, измеренную `/odom` и TF, но не
+создаёт интерфейс управления движением:
 
 ```bash
-ros2 topic hz /lowstate
-ros2 topic echo /g1/imu/data --once
-ros2 topic echo /g1/joint_states --once
+source /home/unitree/g1_ros_env.sh
+source install/setup.bash
+ros2 launch g1_bridge hardware_bringup.launch.py
 ```
+
+Проверить результат и записать полный вывод в один файл:
+
+```bash
+./scripts/hardware_telemetry_check.sh
+```
+
+Пока реальный LiDAR не публикует облако, SLAM/Nav2 и управление движением на
+роботе не запускаются. Текущий подтверждённый статус и точная процедура
+описаны в [docs/HARDWARE.md](docs/HARDWARE.md).
 
 Для G1 с DEX3-1 сначала проверить обратную связь обеих физических кистей:
 
@@ -253,7 +260,8 @@ ros2 service call /g1/enable_control std_srvs/srv/SetBool "{data: false}"
 
 ## Ограничения первой версии
 
-- `/odom` не синтезируется из команды: это была бы не измеренная одометрия. Его добавим после проверки фактического high-level state topic на вашей прошивке.
+- На G1 `/odom` формируется только из измеренной
+  `/state_estimator/odom_pelvis`; симуляционная одометрия не используется.
 - Для Gazebo включён официальный URDF/mesh-набор G1 29 DoF с DEX3-1; перед реальным запуском всё равно надо сверить точную комплектацию робота.
 - Для D435i добавлен отдельный hardware launch; остальные native камеры и LiDAR
   потребуют инвентаризации топиков на конкретной комплектации робота.

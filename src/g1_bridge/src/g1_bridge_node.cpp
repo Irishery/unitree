@@ -43,8 +43,10 @@ class G1Bridge final : public rclcpp::Node {
     joint_state_topic_ =
         declare_parameter<std::string>("joint_state_topic", "/g1/joint_states");
     imu_topic_ = declare_parameter<std::string>("imu_topic", "/g1/imu/data");
-    imu_frame_id_ = declare_parameter<std::string>("imu_frame_id", "torso_imu");
+    imu_frame_id_ = declare_parameter<std::string>("imu_frame_id", "imu_in_torso");
 
+    motion_interface_enabled_ =
+        declare_parameter<bool>("motion_interface_enabled", true);
     control_enabled_ = declare_parameter<bool>("start_control_enabled", false);
     require_recent_low_state_ = declare_parameter<bool>("require_recent_low_state", true);
     low_state_timeout_s_ = declare_parameter<double>("low_state_timeout_s", 0.5);
@@ -65,7 +67,6 @@ class G1Bridge final : public rclcpp::Node {
       throw std::runtime_error("rates and timeouts must be positive");
     }
 
-    command_pub_ = create_publisher<unitree_api::msg::Request>(command_request_topic_, 10);
     joint_pub_ = create_publisher<sensor_msgs::msg::JointState>(joint_state_topic_, 10);
     imu_pub_ = create_publisher<sensor_msgs::msg::Imu>(imu_topic_, rclcpp::SensorDataQoS());
     enabled_pub_ = create_publisher<std_msgs::msg::Bool>(
@@ -76,25 +77,33 @@ class G1Bridge final : public rclcpp::Node {
     low_state_sub_ = create_subscription<unitree_hg::msg::LowState>(
         low_state_topic_, rclcpp::SensorDataQoS(),
         std::bind(&G1Bridge::on_low_state, this, std::placeholders::_1));
-    cmd_vel_sub_ = create_subscription<geometry_msgs::msg::Twist>(
-        "/cmd_vel", rclcpp::QoS(10),
-        std::bind(&G1Bridge::on_cmd_vel, this, std::placeholders::_1));
-    enable_service_ = create_service<std_srvs::srv::SetBool>(
-        "/g1/enable_control",
-        std::bind(&G1Bridge::on_enable, this, std::placeholders::_1,
-                  std::placeholders::_2));
+    if (motion_interface_enabled_) {
+      command_pub_ =
+          create_publisher<unitree_api::msg::Request>(command_request_topic_, 10);
+      cmd_vel_sub_ = create_subscription<geometry_msgs::msg::Twist>(
+          "/cmd_vel", rclcpp::QoS(10),
+          std::bind(&G1Bridge::on_cmd_vel, this, std::placeholders::_1));
+      enable_service_ = create_service<std_srvs::srv::SetBool>(
+          "/g1/enable_control",
+          std::bind(&G1Bridge::on_enable, this, std::placeholders::_1,
+                    std::placeholders::_2));
 
-    const auto command_period = std::chrono::duration<double>(1.0 / command_rate_hz_);
-    command_timer_ = create_wall_timer(
-        std::chrono::duration_cast<std::chrono::nanoseconds>(command_period),
-        std::bind(&G1Bridge::command_tick, this));
+      const auto command_period = std::chrono::duration<double>(1.0 / command_rate_hz_);
+      command_timer_ = create_wall_timer(
+          std::chrono::duration_cast<std::chrono::nanoseconds>(command_period),
+          std::bind(&G1Bridge::command_tick, this));
+    } else {
+      control_enabled_ = false;
+    }
     diagnostics_timer_ = create_wall_timer(1s, std::bind(&G1Bridge::publish_diagnostics, this));
 
     last_cmd_time_ = std::chrono::steady_clock::now() - std::chrono::seconds(10);
     last_telemetry_pub_time_ = last_cmd_time_;
     publish_control_enabled();
-    RCLCPP_WARN(get_logger(), "G1 bridge started with motion control %s",
-                control_enabled_ ? "ENABLED" : "DISABLED");
+    RCLCPP_WARN(
+        get_logger(), "G1 bridge started in %s mode; motion control is %s",
+        motion_interface_enabled_ ? "telemetry + motion-interface" : "telemetry-only",
+        control_enabled_ ? "ENABLED" : "DISABLED");
   }
 
   ~G1Bridge() override {
@@ -227,6 +236,9 @@ class G1Bridge final : public rclcpp::Node {
   }
 
   void publish_velocity(double vx, double vy, double wz) {
+    if (!command_pub_) {
+      return;
+    }
     unitree_api::msg::Request request;
     request.header.identity.api_id = kSetVelocityApiId;
     request.header.identity.id = static_cast<int64_t>(
@@ -259,6 +271,8 @@ class G1Bridge final : public rclcpp::Node {
                             : diagnostic_msgs::msg::DiagnosticStatus::ERROR;
     status.message = state_ok ? "Receiving low state" : "Low state missing or stale";
     status.values.push_back({"control_enabled", control_enabled_ ? "true" : "false"});
+    status.values.push_back(
+        {"motion_interface_enabled", motion_interface_enabled_ ? "true" : "false"});
     status.values.push_back({"cmd_watchdog_stopped", watchdog_stopped_ ? "true" : "false"});
     array.status.push_back(std::move(status));
     diagnostics_pub_->publish(array);
@@ -269,6 +283,7 @@ class G1Bridge final : public rclcpp::Node {
   std::string joint_state_topic_;
   std::string imu_topic_;
   std::string imu_frame_id_;
+  bool motion_interface_enabled_{true};
   bool control_enabled_{false};
   bool require_recent_low_state_{true};
   bool have_low_state_{false};

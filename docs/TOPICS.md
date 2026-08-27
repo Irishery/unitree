@@ -19,6 +19,8 @@ Only `linear.x`, `linear.y`, and `angular.z` are used from `/cmd_vel`. Each valu
 | `/g1/control_enabled` | `std_msgs/msg/Bool` | Latched motion-control state |
 | `/diagnostics` | `diagnostic_msgs/msg/DiagnosticArray` | Low-state and watchdog health |
 | `/api/sport/request` | `unitree_api/msg/Request` | Native G1 locomotion request (API `7105`) |
+| `/odom` | `nav_msgs/msg/Odometry` | Planar odometry adapted from the physical `/state_estimator/odom_pelvis` |
+| `/tf` | `tf2_msgs/msg/TFMessage` | `odom -> base_footprint -> pelvis` plus URDF transforms |
 
 ## Safety behavior
 
@@ -30,6 +32,11 @@ Only `linear.x`, `linear.y`, and `angular.z` are used from `/cmd_vel`. Each valu
 - The default limits are deliberately conservative and live in `config/g1_29dof.yaml`.
 
 The bridge uses Unitree high-level locomotion API `7105`; it never publishes `lowcmd` and never takes direct torque control of a motor.
+
+`hardware_bringup.launch.py` overrides `motion_interface_enabled=false`. In
+that telemetry-only mode the bridge does not create `/g1/enable_control`, does
+not subscribe to `/cmd_vel`, and does not create its `/api/sport/request`
+publisher. This is the required mode for the first physical-robot launch.
 
 ## Simulation navigation
 
