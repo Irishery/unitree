@@ -32,6 +32,13 @@ constexpr int32_t kSetVelocityApiId = 7105;
 double clamp_symmetric(double value, double limit) {
   return std::clamp(value, -std::abs(limit), std::abs(limit));
 }
+
+diagnostic_msgs::msg::KeyValue diagnostic_value(std::string key, std::string value) {
+  diagnostic_msgs::msg::KeyValue result;
+  result.key = std::move(key);
+  result.value = std::move(value);
+  return result;
+}
 }  // namespace
 
 class G1Bridge final : public rclcpp::Node {
@@ -57,8 +64,10 @@ class G1Bridge final : public rclcpp::Node {
     max_linear_x_ = declare_parameter<double>("max_linear_x", 0.5);
     max_linear_y_ = declare_parameter<double>("max_linear_y", 0.3);
     max_angular_z_ = declare_parameter<double>("max_angular_z", 0.8);
-    joint_indices_ = declare_parameter<std::vector<int64_t>>("joint_indices", {});
-    joint_names_ = declare_parameter<std::vector<std::string>>("joint_names", {});
+    joint_indices_ = declare_parameter<std::vector<int64_t>>(
+        "joint_indices", std::vector<int64_t>{});
+    joint_names_ = declare_parameter<std::vector<std::string>>(
+        "joint_names", std::vector<std::string>{});
 
     if (joint_indices_.size() != joint_names_.size() || joint_names_.empty()) {
       throw std::runtime_error("joint_indices and joint_names must be non-empty and equal-sized");
@@ -270,10 +279,12 @@ class G1Bridge final : public rclcpp::Node {
     status.level = state_ok ? diagnostic_msgs::msg::DiagnosticStatus::OK
                             : diagnostic_msgs::msg::DiagnosticStatus::ERROR;
     status.message = state_ok ? "Receiving low state" : "Low state missing or stale";
-    status.values.push_back({"control_enabled", control_enabled_ ? "true" : "false"});
     status.values.push_back(
-        {"motion_interface_enabled", motion_interface_enabled_ ? "true" : "false"});
-    status.values.push_back({"cmd_watchdog_stopped", watchdog_stopped_ ? "true" : "false"});
+        diagnostic_value("control_enabled", control_enabled_ ? "true" : "false"));
+    status.values.push_back(diagnostic_value(
+        "motion_interface_enabled", motion_interface_enabled_ ? "true" : "false"));
+    status.values.push_back(diagnostic_value(
+        "cmd_watchdog_stopped", watchdog_stopped_ ? "true" : "false"));
     array.status.push_back(std::move(status));
     diagnostics_pub_->publish(array);
   }

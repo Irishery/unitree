@@ -20,10 +20,19 @@ source "/opt/ros/${ros_distro}/setup.bash"
 # unitree_hg and unitree_api during the build.  A fresh developer checkout
 # that imports the packages into src/ continues to work without this file.
 unitree_setup="${UNITREE_ROS_SETUP:-/home/unitree/unitree_ros2/install/setup.bash}"
+use_installed_unitree_packages=false
 if [[ -f "${unitree_setup}" ]]; then
   source "${unitree_setup}"
+  use_installed_unitree_packages=true
 fi
 set -u
 
 cd "${workspace_dir}"
-colcon build --symlink-install --packages-up-to g1_bridge
+if [[ "${use_installed_unitree_packages}" == true ]]; then
+  # The robot has Unitree's release packages in an underlay already.  Building
+  # a duplicate source checkout would override ABI-sensitive generated message
+  # headers and triggers colcon's underlay warning.
+  colcon build --symlink-install --packages-select g1_bridge
+else
+  colcon build --symlink-install --packages-up-to g1_bridge
+fi
