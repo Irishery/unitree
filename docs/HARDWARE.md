@@ -86,3 +86,49 @@ After launch:
 The next stage is to expose this standard ROS graph to the laptop and inspect
 the physical model in RViz. LiDAR activation and frame calibration come before
 SLAM, Nav2, or any walking command.
+
+## Head Livox Mid-360: raw cloud only
+
+The physical Mid-360 was reachable on the robot internal network at
+`192.168.123.120`. Its existing G1Pilot sample configuration was not usable on
+this robot: it sent UDP data to `192.168.123.123`, while the robot computer is
+`192.168.123.164`. The repository now contains a corrected driver configuration
+in `g1_mid360_192_168_123_164.json`.
+
+This is deliberately a separate launch. It does not start SLAM, Nav2, the
+motion interface, DEX3, or any Unitree command publisher. Do **not** launch the
+whole G1Pilot stack for this test.
+
+Install the official Livox SDK2 and ROS 2 driver once on the robot:
+
+```bash
+cd /home/unitree/unitree
+./scripts/install_livox_mid360_driver.sh
+```
+
+Then keep the telemetry-only bringup from the previous section running and, in
+another terminal, start only the LiDAR:
+
+```bash
+source /opt/ros/humble/setup.bash
+source /home/unitree/unitree_ros2/install/setup.bash
+source /home/unitree/unitree/install/setup.bash
+source /home/unitree/livox_ws/install/setup.bash
+export LD_LIBRARY_PATH=/usr/local/lib:${LD_LIBRARY_PATH:-}
+ros2 launch g1_bridge mid360.launch.py
+```
+
+The expected topics are `/mid360/points` (`sensor_msgs/PointCloud2`) and
+`/mid360/imu`, both in the URDF frame `mid360_link`. Verify the data and frame
+without moving the robot:
+
+```bash
+timeout 8 ros2 topic hz /mid360/points
+ros2 topic echo /mid360/points --once
+ros2 run tf2_ros tf2_echo pelvis mid360_link
+```
+
+Only after those checks and an RViz visual inspection of ground orientation,
+sensor direction, and the point cloud placement should we create a filtered
+navigation scan/costmap input. The raw 3-D cloud must not be fed directly into
+the existing 2-D navigation configuration.
