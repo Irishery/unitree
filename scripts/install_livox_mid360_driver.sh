@@ -46,8 +46,13 @@ sudo ldconfig
 set +u
 source "$ROS_SETUP"
 set -u
-cd "$LIVOX_WORKSPACE"
-colcon build --symlink-install --packages-select livox_ros_driver2
+
+# Livox keeps the ROS 2 manifest as package_ROS2.xml.  Its official build
+# helper copies it to package.xml and supplies the Humble-specific CMake flags.
+# It clears only this dedicated workspace's generated build/install directories;
+# the already installed SDK under /usr/local and both source trees are kept.
+cd "$LIVOX_WORKSPACE/src/livox_ros_driver2"
+./build.sh humble
 
 echo
 echo "Installed successfully. Start the driver with:"
