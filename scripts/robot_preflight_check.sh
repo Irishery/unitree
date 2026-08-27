@@ -110,7 +110,7 @@ run_checks() {
   echo "ROS_DOMAIN_ID=${ROS_DOMAIN_ID:-}"
   echo "RMW_IMPLEMENTATION=${RMW_IMPLEMENTATION:-}"
   log_shell "printenv | grep -E 'ROS_|RMW|CYCLONEDDS|FASTRTPS|UNITREE' | sort" || true
-  log_shell "ros2 doctor --report | head -120" || true
+  log_shell "ros2 doctor --report 2>&1 | sed -n '1,120p'" || true
 
   section "UNITREE SETUP DISCOVERY"
   echo "Candidate setup.bash files:"
@@ -129,6 +129,8 @@ run_checks() {
   log_shell "ros2 pkg prefix unitree_api" || true
   log_shell "ros2 pkg prefix unitree_go" || true
   log_shell "ros2 interface show unitree_hg/msg/LowState | head -80" || true
+  log_shell "ros2 interface show unitree_hg/msg/SportModeState | head -80" || true
+  log_shell "ros2 interface show unitree_go/msg/SportModeState | head -80" || true
   log_shell "ros2 interface show unitree_api/msg/Request | head -80" || true
   log_shell "ros2 interface show unitree_go/msg/WirelessController | head -80" || true
 
