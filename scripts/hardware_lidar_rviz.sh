@@ -17,9 +17,28 @@ fi
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(cd "${script_dir}/.." && pwd)"
 rviz_config="${repo_root}/src/g1_bridge/rviz/g1_hardware_lidar.rviz"
+image_name="unitree-g1-hardware-rviz:humble"
 
 if [[ ! -f "$rviz_config" ]]; then
   echo "RViz profile not found: $rviz_config" >&2
+  exit 1
+fi
+
+hardware_domain_id="${ROS_DOMAIN_ID:-0}"
+hardware_network_interface="${G1_HARDWARE_NETWORK_INTERFACE:-}"
+if [[ "${hardware_domain_id}" != "0" ]]; then
+  echo "Physical G1 RViz requires ROS_DOMAIN_ID=0 (got ${hardware_domain_id})." >&2
+  exit 2
+fi
+if [[ -n "${hardware_network_interface}" ]]; then
+  if ! ip link show dev "${hardware_network_interface}" >/dev/null 2>&1; then
+    echo "G1 hardware network interface does not exist: ${hardware_network_interface}" >&2
+    exit 2
+  fi
+fi
+if ! docker image inspect "${image_name}" >/dev/null 2>&1; then
+  echo "Hardware RViz image is missing: ${image_name}" >&2
+  echo "Build it first with: ./scripts/hardware_rviz_build.sh" >&2
   exit 1
 fi
 
@@ -37,11 +56,18 @@ docker_args=(
   -e "DISPLAY=${DISPLAY}"
   -e QT_X11_NO_MITSHM=1
   -e XDG_RUNTIME_DIR=/tmp/runtime-root
-  -e "ROS_DOMAIN_ID=${ROS_DOMAIN_ID:-0}"
+  -e "ROS_DOMAIN_ID=${hardware_domain_id}"
   -e ROS_LOCALHOST_ONLY=0
+  -e RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
   -v /tmp/.X11-unix:/tmp/.X11-unix:rw
   -v "${rviz_config}:/tmp/g1_hardware_lidar.rviz:ro"
 )
+
+if [[ -n "${hardware_network_interface}" ]]; then
+  docker_args+=(
+    -e "CYCLONEDDS_URI=<CycloneDDS><Domain><General><Interfaces><NetworkInterface name=\"${hardware_network_interface}\" priority=\"default\" multicast=\"default\" /></Interfaces></General></Domain></CycloneDDS>"
+  )
+fi
 
 # Software rendering is the stable default for this laptop's Docker/X11 path.
 # Set RVIZ_GL=hardware to use /dev/dri instead.
@@ -59,5 +85,5 @@ case "${RVIZ_GL:-software}" in
 esac
 
 docker run "${docker_args[@]}" \
-  osrf/ros:jazzy-desktop \
+  "${image_name}" \
   rviz2 -d /tmp/g1_hardware_lidar.rviz "$@"

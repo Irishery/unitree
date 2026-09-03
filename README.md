@@ -8,9 +8,11 @@ lowstate  ------------------> /g1/joint_states, /g1/imu/data -----> RViz / rqt
 sport request <-------------- /cmd_vel <--------------------------- teleop / GUI
 ```
 
-Bridge предполагается запускать на вычислителе G1. Так Unitree-зависимости и native DDS остаются на роботе, а ноутбук получает обычные ROS-сообщения. Для лабораторной проверки bridge можно запустить прямо на ноутбуке, подключённом Ethernet-кабелем к G1.
+Bridge запускается на вычислителе G1. Так Unitree-зависимости и native DDS
+остаются на роботе, а ноутбук получает обычные ROS-сообщения через отдельный
+Humble/CycloneDDS viewer. Физический bridge нельзя запускать из Jazzy-среды.
 
-Текущая конфигурация рассчитана на **G1 EDU, 29 DoF, ROS 2 Humble, Ubuntu 22.04** на роботе. На ноутбуке с Ubuntu 24.04 можно использовать ROS 2 Jazzy, потому что ноутбук работает только со стандартными сообщениями. Перед первым запуском обязательно сверить модель G1 (23/29 DoF), прошивку и имя сетевого интерфейса.
+Текущая конфигурация рассчитана на **G1 EDU, 29 DoF, ROS 2 Humble, Ubuntu 22.04** на роботе. Физический DDS-контур на ноутбуке также использует ROS 2 Humble и CycloneDDS внутри Docker; смешивать Jazzy и Humble в одном домене нельзя. Jazzy остаётся только в изолированных симуляционных доменах. Перед первым запуском обязательно сверить модель G1 (23/29 DoF), прошивку и имя сетевого интерфейса.
 
 ## Что уже есть
 
@@ -153,14 +155,16 @@ ip -br link
 ip -br address
 ```
 
-В каждом новом терминале робота:
+После сборки в каждом новом терминале робота:
 
 ```bash
 cd /path/to/unitree
-source scripts/use_network.sh eth0 0   # заменить eth0 на фактическое имя
+source scripts/hardware_env.sh eth0   # заменить eth0 на фактическое имя
 ```
 
-На ноутбуке выполнить такой же `source` с интерфейсом, подключённым к роботу, и domain `0`. Если bridge работает на роботе, ноутбуку не нужны `unitree_hg` и `unitree_api`, но нужен `rmw_cyclonedds_cpp`.
+Скрипт фиксирует Humble, CycloneDDS и физический domain `0`. На ноутбуке
+используется отдельный Humble/CycloneDDS Docker-образ из следующего раздела;
+ноутбуку не нужны `unitree_hg` и `unitree_api`.
 
 ## 3. Запуск bridge на роботе
 
@@ -169,10 +173,13 @@ launch. Он публикует модель, joint states, IMU, измерен�
 создаёт интерфейс управления движением:
 
 ```bash
-source /home/unitree/g1_ros_env.sh
-source install/setup.bash
-ros2 launch g1_bridge hardware_bringup.launch.py
+source scripts/hardware_env.sh eth0
+ros2 launch g1_bridge hardware_telemetry.launch.py
 ```
+
+`hardware_bringup.launch.py` и `bridge.launch.py` сохранены как совместимые
+алиасы, но теперь также запускают только telemetry. Сам telemetry-бинарник не
+линкуется с `unitree_api` и не содержит `/cmd_vel` или sport-request publisher.
 
 Проверить результат и записать полный вывод в один файл:
 
@@ -217,24 +224,28 @@ ros2 service call /g1/dex3/stop std_srvs/srv/Trigger "{}"
 
 Если `/lowstate` отсутствует, сначала исправить DDS/interface/domain. Управление при этом включить невозможно.
 
-## 4. GUI и teleop на ноутбуке
+## 4. RViz на ноутбуке
 
-После установки ROS 2 Desktop и CycloneDDS:
-
-```bash
-source scripts/use_network.sh enp3s0 0  # интерфейс ноутбука
-./scripts/smoke_test.sh
-rqt
-```
-
-Для клавиатурного управления установить и запустить:
+Собрать Humble/CycloneDDS образ один раз и запустить RViz:
 
 ```bash
-sudo apt install ros-jazzy-teleop-twist-keyboard   # humble на Ubuntu 22.04
-ros2 run teleop_twist_keyboard teleop_twist_keyboard
+./scripts/hardware_rviz_build.sh
+./scripts/hardware_lidar_rviz.sh
 ```
 
-До включения `/cmd_vel` игнорируется. На роботе с опорой/страховкой и свободной зоной:
+Физический motion-интерфейс вынесен в отдельный launch и остаётся
+заблокированным, пока явно не переданы оба подтверждения:
+
+```bash
+ros2 launch g1_bridge hardware_motion.launch.py \
+  motion_interface:=true allow_hardware_motion:=true
+```
+
+Даже после такого запуска управление остаётся выключенным до вызова
+`/g1/enable_control`. Эту команду нельзя использовать, пока не завершена
+пассивная проверка DDS, LiDAR, TF и watchdog на поддерживаемом роботе.
+
+На роботе с опорой/страховкой и свободной зоной:
 
 ```bash
 ros2 service call /g1/enable_control std_srvs/srv/SetBool "{data: true}"

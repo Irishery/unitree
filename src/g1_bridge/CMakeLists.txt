@@ -31,6 +31,16 @@ ament_target_dependencies(g1_bridge_node
   unitree_hg
 )
 
+add_executable(g1_hardware_telemetry_node src/g1_hardware_telemetry_node.cpp)
+target_compile_features(g1_hardware_telemetry_node PUBLIC cxx_std_17)
+ament_target_dependencies(g1_hardware_telemetry_node
+  diagnostic_msgs
+  rclcpp
+  sensor_msgs
+  std_msgs
+  unitree_hg
+)
+
 add_executable(dex3_bridge_node src/dex3_bridge_node.cpp)
 target_compile_features(dex3_bridge_node PUBLIC cxx_std_17)
 ament_target_dependencies(dex3_bridge_node
@@ -52,7 +62,24 @@ ament_target_dependencies(odom_tf_node
   tf2_ros
 )
 
-install(TARGETS g1_bridge_node dex3_bridge_node odom_tf_node DESTINATION lib/${PROJECT_NAME})
+add_executable(mid360_scan_projector src/mid360_scan_projector.cpp)
+target_compile_features(mid360_scan_projector PUBLIC cxx_std_17)
+ament_target_dependencies(mid360_scan_projector
+  geometry_msgs
+  rclcpp
+  sensor_msgs
+  tf2
+  tf2_ros
+)
+
+install(TARGETS
+  g1_bridge_node
+  g1_hardware_telemetry_node
+  dex3_bridge_node
+  odom_tf_node
+  mid360_scan_projector
+  DESTINATION lib/${PROJECT_NAME}
+)
 install(DIRECTORY config launch DESTINATION share/${PROJECT_NAME})
 install(FILES
   ../../vendor/g1_description/g1_29dof_rev_1_0.urdf

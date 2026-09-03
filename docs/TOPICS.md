@@ -21,6 +21,8 @@ Only `linear.x`, `linear.y`, and `angular.z` are used from `/cmd_vel`. Each valu
 | `/api/sport/request` | `unitree_api/msg/Request` | Native G1 locomotion request (API `7105`) |
 | `/odom` | `nav_msgs/msg/Odometry` | Planar odometry adapted from the physical `/state_estimator/odom_pelvis` |
 | `/tf` | `tf2_msgs/msg/TFMessage` | `odom -> base_footprint -> pelvis` plus URDF transforms |
+| `/scan` | `sensor_msgs/msg/LaserScan` | Passive filtered 2-D projection of physical `/mid360/points` |
+| `/map` | `nav_msgs/msg/OccupancyGrid` | Online map from `hardware_mapping.launch.py` |
 
 ## Safety behavior
 
@@ -33,10 +35,20 @@ Only `linear.x`, `linear.y`, and `angular.z` are used from `/cmd_vel`. Each valu
 
 The bridge uses Unitree high-level locomotion API `7105`; it never publishes `lowcmd` and never takes direct torque control of a motor.
 
-`hardware_bringup.launch.py` overrides `motion_interface_enabled=false`. In
-that telemetry-only mode the bridge does not create `/g1/enable_control`, does
-not subscribe to `/cmd_vel`, and does not create its `/api/sport/request`
-publisher. This is the required mode for the first physical-robot launch.
+`hardware_telemetry.launch.py` starts `g1_hardware_telemetry_node`, a separate
+executable that does not link `unitree_api` and contains no `/cmd_vel`,
+`/g1/enable_control`, or `/api/sport/request` command path. The legacy
+`hardware_bringup.launch.py` and `bridge.launch.py` files are safe aliases for
+that launch.
+
+`hardware_motion.launch.py` is the only physical launch that enables the
+high-level locomotion interface. It requires both `motion_interface:=true` and
+`allow_hardware_motion:=true`, validates Humble/CycloneDDS/domain 0, and still
+starts with `control_enabled=false`.
+
+`hardware_mapping.launch.py` is also passive: it starts only
+`/mid360/points -> /scan -> SLAM Toolbox -> /map`. It does not start Nav2,
+does not expose `/g1/enable_control`, and has no Unitree command publisher.
 
 ## Simulation navigation
 

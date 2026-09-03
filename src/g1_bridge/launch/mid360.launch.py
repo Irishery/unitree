@@ -5,6 +5,7 @@ Unitree command publisher.  It requires the separately installed official
 ``livox_ros_driver2`` package.
 """
 
+import os
 from pathlib import Path
 
 from ament_index_python.packages import get_package_share_directory
@@ -16,6 +17,15 @@ from launch_ros.parameter_descriptions import ParameterValue
 
 
 def generate_launch_description():
+    distro = os.environ.get("ROS_DISTRO", "")
+    rmw = os.environ.get("RMW_IMPLEMENTATION", "")
+    if distro != "humble" or rmw != "rmw_cyclonedds_cpp":
+        raise RuntimeError(
+            "Physical Mid-360 requires ROS_DISTRO=humble and "
+            "RMW_IMPLEMENTATION=rmw_cyclonedds_cpp. Source scripts/hardware_env.sh "
+            "for domain 0, or set an isolated non-zero domain explicitly for diagnostics."
+        )
+
     package_share = Path(get_package_share_directory("g1_bridge"))
     default_config = str(
         package_share / "config" / "g1_mid360_192_168_123_164.json"

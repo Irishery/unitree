@@ -6,9 +6,9 @@ g1_bridge:
     imu_topic: /g1/imu/data
     imu_frame_id: imu_in_torso
 
-    # hardware_bringup.launch.py overrides this to false for the first,
-    # telemetry-only robot run. bridge.launch.py retains the full interface.
-    motion_interface_enabled: true
+    # Motion must be enabled only by hardware_motion.launch.py, which also
+    # requires an explicit launch-time acknowledgement.
+    motion_interface_enabled: false
     # The bridge starts disarmed. Call /g1/enable_control before sending motion.
     start_control_enabled: false
     require_recent_low_state: true

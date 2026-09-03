@@ -12,17 +12,8 @@ echo "Writing hardware telemetry log to: ${log_file}" >&3
 exec >"${log_file}" 2>&1
 
 set +u
-source /opt/ros/humble/setup.bash
-if [[ -f /home/unitree/unitree_ros2/install/setup.bash ]]; then
-  source /home/unitree/unitree_ros2/install/setup.bash
-fi
-if [[ -f "${workspace_dir}/install/setup.bash" ]]; then
-  source "${workspace_dir}/install/setup.bash"
-fi
+source "${workspace_dir}/scripts/hardware_env.sh" "${G1_HARDWARE_NETWORK_INTERFACE:-}"
 set -u
-
-export ROS_DOMAIN_ID="${ROS_DOMAIN_ID:-0}"
-export ROS_LOCALHOST_ONLY="${ROS_LOCALHOST_ONLY:-0}"
 
 run() {
   echo
@@ -42,6 +33,7 @@ echo "Unitree G1 telemetry-only bringup check"
 date --iso-8601=seconds
 echo "ROS_DOMAIN_ID=${ROS_DOMAIN_ID}"
 echo "ROS_LOCALHOST_ONLY=${ROS_LOCALHOST_ONLY}"
+echo "RMW_IMPLEMENTATION=${RMW_IMPLEMENTATION}"
 
 run ros2 node list
 run ros2 topic list

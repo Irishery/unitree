@@ -53,7 +53,7 @@ class G1Bridge final : public rclcpp::Node {
     imu_frame_id_ = declare_parameter<std::string>("imu_frame_id", "imu_in_torso");
 
     motion_interface_enabled_ =
-        declare_parameter<bool>("motion_interface_enabled", true);
+        declare_parameter<bool>("motion_interface_enabled", false);
     control_enabled_ = declare_parameter<bool>("start_control_enabled", false);
     require_recent_low_state_ = declare_parameter<bool>("require_recent_low_state", true);
     low_state_timeout_s_ = declare_parameter<double>("low_state_timeout_s", 0.5);
@@ -294,7 +294,7 @@ class G1Bridge final : public rclcpp::Node {
   std::string joint_state_topic_;
   std::string imu_topic_;
   std::string imu_frame_id_;
-  bool motion_interface_enabled_{true};
+  bool motion_interface_enabled_{false};
   bool control_enabled_{false};
   bool require_recent_low_state_{true};
   bool have_low_state_{false};
