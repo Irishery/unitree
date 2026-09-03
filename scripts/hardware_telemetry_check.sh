@@ -12,7 +12,14 @@ echo "Writing hardware telemetry log to: ${log_file}" >&3
 exec >"${log_file}" 2>&1
 
 set +u
-source "${workspace_dir}/scripts/hardware_env.sh" "${G1_HARDWARE_NETWORK_INTERFACE:-}"
+if [[ -n "${G1_HARDWARE_NETWORK_INTERFACES:-}" ]]; then
+  read -r -a hardware_network_interfaces <<<"${G1_HARDWARE_NETWORK_INTERFACES}"
+  source "${workspace_dir}/scripts/hardware_env.sh" "${hardware_network_interfaces[@]}"
+elif [[ -n "${G1_HARDWARE_NETWORK_INTERFACE:-}" ]]; then
+  source "${workspace_dir}/scripts/hardware_env.sh" "${G1_HARDWARE_NETWORK_INTERFACE}"
+else
+  source "${workspace_dir}/scripts/hardware_env.sh"
+fi
 set -u
 
 run() {

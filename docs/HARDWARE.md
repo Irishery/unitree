@@ -43,16 +43,20 @@ source install/setup.bash
 ```
 
 After the build, use the repository's guarded environment in every new robot
-terminal. Replace `enP8p1s0` if the G1 uses another interface:
+terminal. The confirmed robot uses `enP8p1s0` for its internal Unitree/Livox
+network and `wlxfc23cd952598` for the `10.0.88.0/24` laptop network, so expose
+CycloneDDS on both interfaces:
 
 ```bash
 cd /home/unitree/unitree
-source scripts/hardware_env.sh enP8p1s0
+source scripts/hardware_env.sh enP8p1s0 wlxfc23cd952598
 ```
 
 It fixes `ROS_DISTRO=humble`, `ROS_DOMAIN_ID=0` and
 `RMW_IMPLEMENTATION=rmw_cyclonedds_cpp`, rejects a missing CycloneDDS RMW and
-clears inherited Fast DDS profile variables. It deliberately does not add
+clears inherited Fast DDS profile variables. Supplying both interfaces lets
+the bridge receive the native G1 topics on `192.168.123.0/24` and advertise
+its ROS outputs on Wi-Fi to the laptop. It deliberately does not add
 `/usr/local/lib` globally to `LD_LIBRARY_PATH`.
 
 If `robot_state_publisher` is missing:
@@ -69,7 +73,7 @@ Terminal 1 on the robot:
 
 ```bash
 cd /home/unitree/unitree
-source scripts/hardware_env.sh enP8p1s0
+source scripts/hardware_env.sh enP8p1s0 wlxfc23cd952598
 ros2 launch g1_bridge hardware_telemetry.launch.py
 ```
 
@@ -126,7 +130,7 @@ another terminal, start only the LiDAR:
 
 ```bash
 cd /home/unitree/unitree
-source scripts/hardware_env.sh enP8p1s0
+source scripts/hardware_env.sh enP8p1s0 wlxfc23cd952598
 ros2 launch g1_bridge mid360.launch.py
 ```
 
@@ -146,7 +150,7 @@ After the TF checks pass, start the following in a **third** robot terminal:
 
 ```bash
 cd /home/unitree/unitree
-source scripts/hardware_env.sh enP8p1s0
+source scripts/hardware_env.sh enP8p1s0 wlxfc23cd952598
 ros2 launch g1_bridge hardware_mapping.launch.py
 ```
 
@@ -271,7 +275,7 @@ start the separately gated high-level interface:
 
 ```bash
 cd /home/unitree/unitree
-source scripts/hardware_env.sh enP8p1s0
+source scripts/hardware_env.sh enP8p1s0 wlxfc23cd952598
 ros2 launch g1_bridge hardware_motion.launch.py \
   motion_interface:=true allow_hardware_motion:=true
 ```

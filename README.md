@@ -159,7 +159,7 @@ ip -br address
 
 ```bash
 cd /path/to/unitree
-source scripts/hardware_env.sh eth0   # заменить eth0 на фактическое имя
+source scripts/hardware_env.sh eth0 wlan0   # внутренний и внешний интерфейсы робота
 ```
 
 Скрипт фиксирует Humble, CycloneDDS и физический domain `0`. На ноутбуке
@@ -173,7 +173,7 @@ launch. Он публикует модель, joint states, IMU, измерен�
 создаёт интерфейс управления движением:
 
 ```bash
-source scripts/hardware_env.sh eth0
+source scripts/hardware_env.sh eth0 wlan0
 ros2 launch g1_bridge hardware_telemetry.launch.py
 ```
 
