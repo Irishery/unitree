@@ -49,6 +49,7 @@ CycloneDDS on both interfaces:
 
 ```bash
 cd /home/unitree/unitree
+export G1_HARDWARE_PEERS=10.0.88.165
 source scripts/hardware_env.sh enP8p1s0 wlxfc23cd952598
 ```
 
@@ -226,6 +227,15 @@ G1 explicitly:
 
 ```bash
 G1_HARDWARE_NETWORK_INTERFACE=enp3s0 ./scripts/hardware_lidar_rviz.sh
+```
+
+For the confirmed Wi-Fi addresses, bypass multicast-only discovery with an
+explicit robot peer:
+
+```bash
+G1_HARDWARE_NETWORK_INTERFACE=wlp3s0 \
+G1_HARDWARE_PEERS=10.0.88.180 \
+  ./scripts/hardware_lidar_rviz.sh
 ```
 
 The profile selects `odom` as the fixed frame and displays `/mid360/points`.

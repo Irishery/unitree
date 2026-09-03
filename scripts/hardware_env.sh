@@ -12,7 +12,9 @@ esac
 
 _g1_hardware_setup() {
   local script_dir workspace_dir unitree_setup network_interface interfaces_xml interface_list
+  local peer peers_xml peer_list general_xml discovery_xml
   local -a network_interfaces=()
+  local -a peers=()
 
   script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
   workspace_dir="$(cd -- "${script_dir}/.." && pwd)"
@@ -26,6 +28,9 @@ _g1_hardware_setup() {
     read -r -a network_interfaces <<<"${G1_HARDWARE_NETWORK_INTERFACES}"
   elif [[ -n "${G1_HARDWARE_NETWORK_INTERFACE:-}" ]]; then
     network_interfaces+=("${G1_HARDWARE_NETWORK_INTERFACE}")
+  fi
+  if [[ -n "${G1_HARDWARE_PEERS:-}" ]]; then
+    read -r -a peers <<<"${G1_HARDWARE_PEERS}"
   fi
 
   if [[ ! -f /opt/ros/humble/setup.bash ]]; then
@@ -71,9 +76,35 @@ _g1_hardware_setup() {
       interfaces_xml+="<NetworkInterface name=\"${network_interface}\" priority=\"default\" multicast=\"default\" />"
       interface_list+="${interface_list:+,}${network_interface}"
     done
-    export CYCLONEDDS_URI="<CycloneDDS><Domain><General><Interfaces>${interfaces_xml}</Interfaces></General></Domain></CycloneDDS>"
+    general_xml="<General><Interfaces>${interfaces_xml}</Interfaces></General>"
   else
     interface_list="auto"
+    general_xml=""
+  fi
+
+  peers_xml=""
+  peer_list="none"
+  for peer in "${peers[@]}"; do
+    if [[ ! "${peer}" =~ ^[[:alnum:]_.:-]+$ ]]; then
+      echo "G1 hardware environment error: invalid CycloneDDS peer: ${peer}" >&2
+      return 1
+    fi
+    peers_xml+="<Peer address=\"${peer}\" />"
+    if [[ "${peer_list}" == "none" ]]; then
+      peer_list="${peer}"
+    else
+      peer_list+=",${peer}"
+    fi
+  done
+  if [[ -n "${peers_xml}" ]]; then
+    discovery_xml="<Discovery><Peers>${peers_xml}</Peers></Discovery>"
+  else
+    discovery_xml=""
+  fi
+
+  if [[ -n "${general_xml}${discovery_xml}" ]]; then
+    export CYCLONEDDS_URI="<CycloneDDS><Domain>${general_xml}${discovery_xml}</Domain></CycloneDDS>"
+  else
     unset CYCLONEDDS_URI
   fi
 
@@ -90,7 +121,7 @@ _g1_hardware_setup() {
     return 1
   fi
 
-  echo "G1 hardware ROS environment: distro=${ROS_DISTRO}, domain=${ROS_DOMAIN_ID}, rmw=${RMW_IMPLEMENTATION}, interfaces=${interface_list}"
+  echo "G1 hardware ROS environment: distro=${ROS_DISTRO}, domain=${ROS_DOMAIN_ID}, rmw=${RMW_IMPLEMENTATION}, interfaces=${interface_list}, peers=${peer_list}"
 }
 
 if _g1_hardware_setup "$@"; then

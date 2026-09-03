@@ -26,6 +26,8 @@ fi
 
 hardware_domain_id="${ROS_DOMAIN_ID:-0}"
 hardware_network_interface="${G1_HARDWARE_NETWORK_INTERFACE:-}"
+hardware_peers="${G1_HARDWARE_PEERS:-}"
+declare -a cyclonedds_peer_array=()
 if [[ "${hardware_domain_id}" != "0" ]]; then
   echo "Physical G1 RViz requires ROS_DOMAIN_ID=0 (got ${hardware_domain_id})." >&2
   exit 2
@@ -63,9 +65,26 @@ docker_args=(
   -v "${rviz_config}:/tmp/g1_hardware_lidar.rviz:ro"
 )
 
+cyclonedds_general=""
+cyclonedds_discovery=""
 if [[ -n "${hardware_network_interface}" ]]; then
+  cyclonedds_general="<General><Interfaces><NetworkInterface name=\"${hardware_network_interface}\" priority=\"default\" multicast=\"default\" /></Interfaces></General>"
+fi
+if [[ -n "${hardware_peers}" ]]; then
+  cyclonedds_peers=""
+  read -r -a cyclonedds_peer_array <<<"${hardware_peers}"
+  for peer in "${cyclonedds_peer_array[@]}"; do
+    if [[ ! "${peer}" =~ ^[[:alnum:]_.:-]+$ ]]; then
+      echo "Invalid CycloneDDS peer: ${peer}" >&2
+      exit 2
+    fi
+    cyclonedds_peers+="<Peer address=\"${peer}\" />"
+  done
+  cyclonedds_discovery="<Discovery><Peers>${cyclonedds_peers}</Peers></Discovery>"
+fi
+if [[ -n "${cyclonedds_general}${cyclonedds_discovery}" ]]; then
   docker_args+=(
-    -e "CYCLONEDDS_URI=<CycloneDDS><Domain><General><Interfaces><NetworkInterface name=\"${hardware_network_interface}\" priority=\"default\" multicast=\"default\" /></Interfaces></General></Domain></CycloneDDS>"
+    -e "CYCLONEDDS_URI=<CycloneDDS><Domain>${cyclonedds_general}${cyclonedds_discovery}</Domain></CycloneDDS>"
   )
 fi
 
