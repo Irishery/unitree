@@ -4,20 +4,37 @@ MuJoCo-стенд запускается отдельно от Gazebo. По ум
 навигационный стенд A → B: SLAM/Nav2 включены, RViz запускается отдельно, а
 распознавание и захват коробки не стартуют.
 
+## Safety boundary
+
+MuJoCo всегда запускается в локальном DDS domain `42` с
+`ROS_LOCALHOST_ONLY=1`. Он не наследует ROS/DDS-настройки терминала и поэтому
+не видит физический G1, который использует domain `0`. API-эмулятор также
+использует только `/g1/sim/api/sport/request` и
+`/g1/sim/api/sport/response`, а не нативные `/api/sport/*` робота.
+
+Для отдельного симуляционного стенда разрешён другой ненулевой domain:
+
+```bash
+MUJOCO_ROS_DOMAIN_ID=43 ./scripts/mujoco_up.sh
+MUJOCO_ROS_DOMAIN_ID=43 ./scripts/mujoco_rviz.sh
+```
+
+Значение `0` намеренно отклоняется скриптами.
+
 ```bash
 ./scripts/mujoco_build.sh
 ./scripts/mujoco_up.sh
 ```
 
 Если нужно проверить железо-совместимый high-level locomotion API, включите
-эмулятор Unitree `/api/sport/request`:
+эмулятор Unitree `/g1/sim/api/sport/request`:
 
 ```bash
 ./scripts/mujoco_up.sh loco_api:=true
 ```
 
 Он принимает тот же ROS 2 wire contract, что реальный G1 `LocoClient`, и
-отвечает в `/api/sport/response`. Поддерживаемый минимум: FSM/state queries,
+отвечает в `/g1/sim/api/sport/response`. Поддерживаемый минимум: FSM/state queries,
 `SetFsmId`, `SetBalanceMode`, `SetSwingHeight`, `SetStandHeight`,
 `SetSpeedMode`, `SetVelocity` (`7105`) и stop/stand/move aliases. Внутри
 симуляции это переводится в `geometry_msgs/Twist`; закрытый firmware-контроллер
@@ -55,7 +72,7 @@ RVIZ_PROFILE=lite ./scripts/mujoco_rviz.sh
 RViz/Nav2 Goal
   -> Nav2 /cmd_vel
   -> g1_cmd_vel_loco_bridge
-  -> /api/sport/request
+  -> /g1/sim/api/sport/request
   -> g1_loco_api_sim
   -> /g1/sim/cmd_vel
   -> MuJoCo odom/tf
@@ -220,9 +237,9 @@ docker exec unitree-g1-mujoco bash -lc \
   'source /opt/ros/jazzy/setup.bash && source /ws/install/setup.bash && ros2 action list | grep navigate_to_pose'
 ```
 
-Если в одном терминале вы задавали `ROS_DOMAIN_ID` через `scripts/use_network.sh`,
-запускайте MuJoCo и RViz из терминалов с тем же `ROS_DOMAIN_ID`; скрипты
-пробрасывают этот env внутрь Docker.
+MuJoCo и его RViz не используют `ROS_DOMAIN_ID` из терминала. Оба по умолчанию
+работают только в локальном domain `42`; для другого изолированного стенда
+передайте одинаковый `MUJOCO_ROS_DOMAIN_ID` обоим скриптам.
 
 Если снова появляется `failed to create drawable`, сначала пересоберите образ
 после добавления Mesa-драйверов, затем попробуйте режим с полным доступом к GPU:

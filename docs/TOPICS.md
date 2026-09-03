@@ -51,8 +51,8 @@ physical G1 bridge:
 | `/map` | `nav_msgs/msg/OccupancyGrid` | Online map from SLAM Toolbox |
 | `/plan` | `nav_msgs/msg/Path` | Current Nav2 global plan |
 | `/cmd_vel` | `geometry_msgs/msg/Twist` | Final Nav2/collision-monitor velocity command to the active simulator |
-| `/api/sport/request` | `unitree_api/msg/Request` | Optional simulated G1 high-level locomotion API input |
-| `/api/sport/response` | `unitree_api/msg/Response` | Optional simulated response to high-level locomotion API calls |
+| `/g1/sim/api/sport/request` | `unitree_api/msg/Request` | Optional simulated G1 high-level locomotion API input; never the native robot topic |
+| `/g1/sim/api/sport/response` | `unitree_api/msg/Response` | Optional simulated response to high-level locomotion API calls |
 
 The physical Mid-360 and physical odometry need hardware-specific drivers and
 must not be replaced with these simulation sources. In MuJoCo, `/cmd_vel` is a
@@ -71,7 +71,7 @@ That route keeps MuJoCo off direct `/cmd_vel` and uses:
 ```text
 Nav2 /cmd_vel
   -> g1_cmd_vel_loco_bridge
-  -> /api/sport/request
+  -> /g1/sim/api/sport/request
   -> g1_loco_api_sim
   -> /g1/sim/cmd_vel
   -> MuJoCo

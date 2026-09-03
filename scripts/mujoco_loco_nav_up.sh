@@ -6,7 +6,7 @@ script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # Hardware-like command path for MuJoCo:
 #   Nav2 /cmd_vel
 #     -> cmd_vel_loco_bridge
-#     -> /api/sport/request
+#     -> /g1/sim/api/sport/request
 #     -> loco_api_sim
 #     -> /g1/sim/cmd_vel
 #     -> sim.py
@@ -18,8 +18,11 @@ exec "${script_dir}/mujoco_up.sh" \
   slam:=true \
   loco_api:=true \
   loco_api_bridge:=true \
+  loco_api_request_topic:=/g1/sim/api/sport/request \
+  loco_api_response_topic:=/g1/sim/api/sport/response \
   loco_api_cmd_vel_topic:=/g1/sim/cmd_vel \
   loco_api_bridge_cmd_vel_topic:=/cmd_vel \
+  loco_api_bridge_request_topic:=/g1/sim/api/sport/request \
   sim_cmd_vel_topic:=/g1/sim/cmd_vel \
   sim_smoothed_cmd_vel_topic:=/g1/sim/cmd_vel_smoothed \
   "$@"

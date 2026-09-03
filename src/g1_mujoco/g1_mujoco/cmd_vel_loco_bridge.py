@@ -1,11 +1,11 @@
 """Bridge Nav2-style cmd_vel into the simulated Unitree locomotion API.
 
 This is intentionally simulation-only.  On the real robot, g1_bridge publishes
-the same /api/sport/request SetVelocity messages and guards them with real
+the real G1's `/api/sport/request` SetVelocity messages and guards them with real
 lowstate/diagnostics/watchdogs.  In MuJoCo we use this lightweight bridge to
 exercise the full command chain:
 
-  Nav2 /cmd_vel -> /api/sport/request -> g1_loco_api_sim -> sim command topic.
+  Nav2 /cmd_vel -> /g1/sim/api/sport/request -> g1_loco_api_sim -> sim command topic.
 """
 
 import json
@@ -25,7 +25,7 @@ class CmdVelLocoBridge(Node):
         super().__init__("g1_cmd_vel_loco_bridge")
         self.cmd_vel_topic = self.declare_parameter("cmd_vel_topic", "/cmd_vel").value
         self.request_topic = self.declare_parameter(
-            "request_topic", "/api/sport/request").value
+            "request_topic", "/g1/sim/api/sport/request").value
         self.publish_rate_hz = float(self.declare_parameter(
             "publish_rate_hz", 20.0).value)
         self.cmd_timeout_s = float(self.declare_parameter(

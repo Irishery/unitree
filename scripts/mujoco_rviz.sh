@@ -13,6 +13,10 @@ rviz_profile="${RVIZ_PROFILE:-nav}"
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(cd "${script_dir}/.." && pwd)"
 rviz_dir="${repo_root}/src/g1_mujoco/rviz"
+# MuJoCo RViz must join the same isolated local domain as mujoco_up.sh, never
+# the physical G1's domain 0.  Do not inherit host DDS configuration.
+source "${script_dir}/mujoco_env.sh"
+mujoco_domain_id="$(mujoco_ros_domain_id)"
 
 case "${rviz_profile}" in
   nav)
@@ -33,18 +37,12 @@ esac
 rviz_config="/tmp/unitree_rviz/${rviz_file}"
 wait_nav="${RVIZ_WAIT_NAV:-true}"
 
-ros_env_args=()
-for name in ROS_DOMAIN_ID RMW_IMPLEMENTATION CYCLONEDDS_URI FASTRTPS_DEFAULT_PROFILES_FILE; do
-  if [[ -n "${!name:-}" ]]; then
-    ros_env_args+=(-e "${name}=${!name}")
-  fi
-done
-
 docker_args=(
   --rm
   --network host
   --ipc=host
-  "${ros_env_args[@]}"
+  -e "ROS_DOMAIN_ID=${mujoco_domain_id}"
+  -e ROS_LOCALHOST_ONLY=1
   -e "DISPLAY=${DISPLAY:-:0}"
   -e QT_X11_NO_MITSHM=1
   # NOTE: no QT_OPENGL=desktop here.  Forcing Qt onto GLX made RViz emit

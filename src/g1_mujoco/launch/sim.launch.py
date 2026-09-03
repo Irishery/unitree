@@ -43,11 +43,16 @@ def generate_launch_description():
         DeclareLaunchArgument("slam", default_value="true"),
         DeclareLaunchArgument("tabletop_pick", default_value="false"),
         DeclareLaunchArgument("loco_api", default_value="false"),
+        DeclareLaunchArgument(
+            "loco_api_request_topic", default_value="/g1/sim/api/sport/request"),
+        DeclareLaunchArgument(
+            "loco_api_response_topic", default_value="/g1/sim/api/sport/response"),
         DeclareLaunchArgument("loco_api_cmd_vel_topic", default_value="/cmd_vel"),
         DeclareLaunchArgument("loco_api_require_start", default_value="false"),
         DeclareLaunchArgument("loco_api_bridge", default_value="false"),
         DeclareLaunchArgument("loco_api_bridge_cmd_vel_topic", default_value="/cmd_vel"),
-        DeclareLaunchArgument("loco_api_bridge_request_topic", default_value="/api/sport/request"),
+        DeclareLaunchArgument(
+            "loco_api_bridge_request_topic", default_value="/g1/sim/api/sport/request"),
         DeclareLaunchArgument("sim_cmd_vel_topic", default_value="/cmd_vel"),
         DeclareLaunchArgument("sim_smoothed_cmd_vel_topic", default_value="/cmd_vel_smoothed"),
         Node(
@@ -71,6 +76,8 @@ def generate_launch_description():
             name="g1_loco_api_sim",
             condition=IfCondition(loco_api),
             parameters=[{
+                "request_topic": LaunchConfiguration("loco_api_request_topic"),
+                "response_topic": LaunchConfiguration("loco_api_response_topic"),
                 "cmd_vel_topic": LaunchConfiguration("loco_api_cmd_vel_topic"),
                 "require_start": LaunchConfiguration("loco_api_require_start"),
             }],

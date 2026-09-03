@@ -95,8 +95,8 @@ class Client(Node):
         self.done = False
         self.response = None
         self.request_id = time.time_ns()
-        self.pub = self.create_publisher(Request, '/api/sport/request', 10)
-        self.sub = self.create_subscription(Response, '/api/sport/response', self.on_response, 10)
+        self.pub = self.create_publisher(Request, '/g1/sim/api/sport/request', 10)
+        self.sub = self.create_subscription(Response, '/g1/sim/api/sport/response', self.on_response, 10)
 
     def on_response(self, msg):
         if msg.header.identity.id == self.request_id:
@@ -120,7 +120,7 @@ while time.time() < deadline and not node.done:
     rclpy.spin_once(node, timeout_sec=0.1)
 
 if node.response is None:
-    print('No /api/sport/response received', file=sys.stderr)
+    print('No /g1/sim/api/sport/response received', file=sys.stderr)
     rclpy.shutdown()
     sys.exit(1)
 

@@ -1,7 +1,7 @@
 """Simulation-side adapter for the Unitree G1 high-level locomotion API.
 
 The real G1 exposes high-level locomotion through unitree_api Request/Response
-messages on /api/sport/request and /api/sport/response.  MuJoCo cannot run the
+messages on /g1/sim/api/sport/request and /g1/sim/api/sport/response.  MuJoCo cannot run the
 closed firmware controller, but this node mirrors that wire contract and maps
 the supported requests to a geometry_msgs/Twist command consumed by sim.py.
 """
@@ -51,9 +51,9 @@ class LocoApiSim(Node):
     def __init__(self):
         super().__init__("g1_loco_api_sim")
         self.request_topic = self.declare_parameter(
-            "request_topic", "/api/sport/request").value
+            "request_topic", "/g1/sim/api/sport/request").value
         self.response_topic = self.declare_parameter(
-            "response_topic", "/api/sport/response").value
+            "response_topic", "/g1/sim/api/sport/response").value
         self.cmd_vel_topic = self.declare_parameter(
             "cmd_vel_topic", "/cmd_vel").value
         self.publish_rate_hz = float(self.declare_parameter(

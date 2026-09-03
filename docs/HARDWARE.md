@@ -132,3 +132,32 @@ Only after those checks and an RViz visual inspection of ground orientation,
 sensor direction, and the point cloud placement should we create a filtered
 navigation scan/costmap input. The raw 3-D cloud must not be fed directly into
 the existing 2-D navigation configuration.
+
+### RViz on the Ubuntu 24.04 laptop
+
+The laptop has Ubuntu 24.04 without a native ROS installation, so use the
+pre-existing `osrf/ros:jazzy-desktop` Docker image. This viewer uses host
+networking solely to receive DDS topics from the robot; it does not start
+MuJoCo, SLAM, Nav2, or a motion publisher.
+
+Keep `hardware_bringup.launch.py` and `mid360.launch.py` running on the robot.
+On the laptop graphical desktop, connected to the same DDS-capable network,
+run:
+
+```bash
+cd /home/kir/unitree
+./scripts/hardware_lidar_rviz.sh
+```
+
+The profile selects `odom` as the fixed frame and displays `/mid360/points`.
+The factory URDF mounts `mid360_link` with an approximately 180-degree roll;
+using the sensor frame as RViz's fixed frame therefore makes the raw view look
+upside-down. `odom` applies that fixed TF and is the correct world view. If
+the window opens but no points appear, first verify DDS visibility from the
+same laptop terminal:
+
+```bash
+docker run --rm --network host -e ROS_DOMAIN_ID=0 -e ROS_LOCALHOST_ONLY=0 \
+  osrf/ros:jazzy-desktop \
+  bash -lc 'source /opt/ros/jazzy/setup.bash && timeout 8 ros2 topic hz /mid360/points'
+```
