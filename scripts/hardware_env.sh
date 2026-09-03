@@ -89,7 +89,7 @@ _g1_hardware_setup() {
       echo "G1 hardware environment error: invalid CycloneDDS peer: ${peer}" >&2
       return 1
     fi
-    peers_xml+="<Peer address=\"${peer}\" />"
+    peers_xml+="<Peer Address=\"${peer}\" />"
     if [[ "${peer_list}" == "none" ]]; then
       peer_list="${peer}"
     else

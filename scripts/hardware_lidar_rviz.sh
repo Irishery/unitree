@@ -78,7 +78,7 @@ if [[ -n "${hardware_peers}" ]]; then
       echo "Invalid CycloneDDS peer: ${peer}" >&2
       exit 2
     fi
-    cyclonedds_peers+="<Peer address=\"${peer}\" />"
+    cyclonedds_peers+="<Peer Address=\"${peer}\" />"
   done
   cyclonedds_discovery="<Discovery><Peers>${cyclonedds_peers}</Peers></Discovery>"
 fi
