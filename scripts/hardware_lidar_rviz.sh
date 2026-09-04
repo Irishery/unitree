@@ -66,7 +66,10 @@ docker_args=(
 )
 
 cyclonedds_general=""
-cyclonedds_discovery=""
+# This container runs a single DDS application (RViz), so a fixed participant
+# index is safe and gives the robot a deterministic discovery endpoint.  For
+# ROS_DOMAIN_ID=0, participant index 0 uses the standard SPDP unicast port 7410.
+cyclonedds_discovery="<Discovery><ParticipantIndex>0</ParticipantIndex></Discovery>"
 if [[ -n "${hardware_network_interface}" ]]; then
   cyclonedds_general="<General><Interfaces><NetworkInterface name=\"${hardware_network_interface}\" priority=\"default\" multicast=\"default\" /></Interfaces><MulticastRecvNetworkInterfaceAddresses>all</MulticastRecvNetworkInterfaceAddresses></General>"
 fi
@@ -80,7 +83,7 @@ if [[ -n "${hardware_peers}" ]]; then
     fi
     cyclonedds_peers+="<Peer Address=\"${peer}\" />"
   done
-  cyclonedds_discovery="<Discovery><ParticipantIndex>auto</ParticipantIndex><MaxAutoParticipantIndex>120</MaxAutoParticipantIndex><Peers>${cyclonedds_peers}</Peers></Discovery>"
+  cyclonedds_discovery="<Discovery><ParticipantIndex>0</ParticipantIndex><Peers>${cyclonedds_peers}</Peers></Discovery>"
 fi
 if [[ -n "${cyclonedds_general}${cyclonedds_discovery}" ]]; then
   docker_args+=(

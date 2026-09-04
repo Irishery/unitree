@@ -49,7 +49,7 @@ CycloneDDS on both interfaces:
 
 ```bash
 cd /home/unitree/unitree
-export G1_HARDWARE_PEERS=10.0.88.165
+export G1_HARDWARE_PEERS=10.0.88.165:7410
 source scripts/hardware_env.sh wlxfc23cd952598 enP8p1s0
 ```
 
@@ -57,7 +57,9 @@ It fixes `ROS_DISTRO=humble`, `ROS_DOMAIN_ID=0` and
 `RMW_IMPLEMENTATION=rmw_cyclonedds_cpp`, rejects a missing CycloneDDS RMW and
 clears inherited Fast DDS profile variables. Supplying both interfaces lets
 the bridge receive the native G1 topics on `192.168.123.0/24` and advertise
-its ROS outputs on Wi-Fi to the laptop. It deliberately does not add
+its ROS outputs on Wi-Fi to the laptop. Port `7410` is the fixed CycloneDDS
+discovery port used by the single-process RViz container on domain 0; specifying
+it avoids slow peer-port scanning over Wi-Fi. It deliberately does not add
 `/usr/local/lib` globally to `LD_LIBRARY_PATH`.
 
 If `robot_state_publisher` is missing:
@@ -74,6 +76,7 @@ Terminal 1 on the robot:
 
 ```bash
 cd /home/unitree/unitree
+export G1_HARDWARE_PEERS=10.0.88.165:7410
 source scripts/hardware_env.sh wlxfc23cd952598 enP8p1s0
 ros2 launch g1_bridge hardware_telemetry.launch.py
 ```
@@ -131,6 +134,7 @@ another terminal, start only the LiDAR:
 
 ```bash
 cd /home/unitree/unitree
+export G1_HARDWARE_PEERS=10.0.88.165:7410
 source scripts/hardware_env.sh wlxfc23cd952598 enP8p1s0
 ros2 launch g1_bridge mid360.launch.py
 ```
@@ -237,6 +241,10 @@ G1_HARDWARE_NETWORK_INTERFACE=wlp3s0 \
 G1_HARDWARE_PEERS=10.0.88.180 \
   ./scripts/hardware_lidar_rviz.sh
 ```
+
+The viewer reserves CycloneDDS participant index 0, hence UDP port `7410` on
+domain 0. Run only one hardware RViz container at a time, and configure the
+robot peer as `10.0.88.165:7410` as shown above.
 
 The profile selects `odom` as the fixed frame and displays `/mid360/points`.
 The factory URDF mounts `mid360_link` with an approximately 180-degree roll;
