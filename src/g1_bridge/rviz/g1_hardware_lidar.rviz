@@ -57,6 +57,7 @@ Visualization Manager:
     - Alpha: 1
       Class: rviz_default_plugins/LaserScan
       Color: 0; 255; 255
+      Color Transformer: FlatColor
       Enabled: true
       Name: Filtered navigation scan
       Point Size: 3
