@@ -110,7 +110,7 @@ The next stage is to expose this standard ROS graph to the laptop and inspect
 the physical model in RViz. LiDAR activation and frame calibration come before
 SLAM, Nav2, or any walking command.
 
-## Head Livox Mid-360: raw cloud only
+## Head Livox Mid-360: raw cloud and reduced RViz relay
 
 The physical Mid-360 was reachable on the robot internal network at
 `192.168.123.120`. Its existing G1Pilot sample configuration was not usable on
@@ -139,15 +139,23 @@ source scripts/hardware_env.sh wlxfc23cd952598 enP8p1s0
 ros2 launch g1_bridge mid360.launch.py
 ```
 
-The expected topics are `/mid360/points` (`sensor_msgs/PointCloud2`) and
-`/mid360/imu`, both in the URDF frame `mid360_link`. Verify the data and frame
-without moving the robot:
+The launch keeps the full `/mid360/points` cloud for robot-local processing and
+publishes `/mid360/points_rviz` for the laptop. By default the relay takes every
+second frame and every fourth point, reducing the network payload by about 8x
+without modifying the raw topic. `/mid360/imu` is unchanged. All three messages
+use the URDF frame `mid360_link`. Verify the data and frame without moving the
+robot:
 
 ```bash
 timeout 8 ros2 topic hz /mid360/points
+timeout 8 ros2 topic hz /mid360/points_rviz
 ros2 topic echo /mid360/points --once
 ros2 run tf2_ros tf2_echo pelvis mid360_link
 ```
+
+The relay can be tuned at launch time, for example
+`rviz_frame_stride:=2 rviz_point_stride:=8`, or disabled with
+`rviz_relay:=false`. These options affect only the laptop visualization topic.
 
 ## Passive 2-D SLAM from the real Mid-360
 
@@ -246,7 +254,9 @@ The viewer reserves CycloneDDS participant index 0, hence UDP port `7410` on
 domain 0. Run only one hardware RViz container at a time, and configure the
 robot peer as `10.0.88.165:7410` as shown above.
 
-The profile selects `odom` as the fixed frame and displays `/mid360/points`.
+The profile selects `odom` as the fixed frame and displays the reduced
+`/mid360/points_rviz` topic. The full `/mid360/points` topic remains available
+locally on the robot for projection, mapping and later navigation.
 The factory URDF mounts `mid360_link` with an approximately 180-degree roll;
 using the sensor frame as RViz's fixed frame therefore makes the raw view look
 upside-down. `odom` applies that fixed TF and is the correct world view. If
@@ -257,7 +267,7 @@ same laptop terminal:
 docker run --rm --network host -e ROS_DOMAIN_ID=0 -e ROS_LOCALHOST_ONLY=0 \
   -e RMW_IMPLEMENTATION=rmw_cyclonedds_cpp \
   unitree-g1-hardware-rviz:humble \
-  bash -lc 'source /opt/ros/humble/setup.bash && timeout 8 ros2 topic hz /mid360/points'
+  bash -lc 'source /opt/ros/humble/setup.bash && timeout 8 ros2 topic hz /mid360/points_rviz'
 ```
 
 ## Isolating DDS serialization faults

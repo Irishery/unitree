@@ -21,6 +21,8 @@ Only `linear.x`, `linear.y`, and `angular.z` are used from `/cmd_vel`. Each valu
 | `/api/sport/request` | `unitree_api/msg/Request` | Native G1 locomotion request (API `7105`) |
 | `/odom` | `nav_msgs/msg/Odometry` | Planar odometry adapted from the physical `/state_estimator/odom_pelvis` |
 | `/tf` | `tf2_msgs/msg/TFMessage` | `odom -> base_footprint -> pelvis` plus URDF transforms |
+| `/mid360/points` | `sensor_msgs/msg/PointCloud2` | Full physical Mid-360 cloud retained for robot-local perception |
+| `/mid360/points_rviz` | `sensor_msgs/msg/PointCloud2` | Reduced physical cloud for reliable laptop visualization |
 | `/scan` | `sensor_msgs/msg/LaserScan` | Passive filtered 2-D projection of physical `/mid360/points` |
 | `/map` | `nav_msgs/msg/OccupancyGrid` | Online map from `hardware_mapping.launch.py` |
 

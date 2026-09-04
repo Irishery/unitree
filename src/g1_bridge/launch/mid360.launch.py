@@ -11,6 +11,7 @@ from pathlib import Path
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
+from launch.conditions import IfCondition
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 from launch_ros.parameter_descriptions import ParameterValue
@@ -36,6 +37,9 @@ def generate_launch_description():
             DeclareLaunchArgument("config", default_value=default_config),
             DeclareLaunchArgument("frame_id", default_value="mid360_link"),
             DeclareLaunchArgument("publish_freq", default_value="10.0"),
+            DeclareLaunchArgument("rviz_relay", default_value="true"),
+            DeclareLaunchArgument("rviz_frame_stride", default_value="2"),
+            DeclareLaunchArgument("rviz_point_stride", default_value="4"),
             Node(
                 package="livox_ros_driver2",
                 executable="livox_ros_driver2_node",
@@ -59,6 +63,25 @@ def generate_launch_description():
                 remappings=[
                     ("livox/lidar", "/mid360/points"),
                     ("livox/imu", "/mid360/imu"),
+                ],
+            ),
+            Node(
+                package="g1_bridge",
+                executable="mid360_rviz_relay",
+                name="g1_mid360_rviz_relay",
+                output="screen",
+                condition=IfCondition(LaunchConfiguration("rviz_relay")),
+                parameters=[
+                    {
+                        "input_topic": "/mid360/points",
+                        "output_topic": "/mid360/points_rviz",
+                        "frame_stride": ParameterValue(
+                            LaunchConfiguration("rviz_frame_stride"), value_type=int
+                        ),
+                        "point_stride": ParameterValue(
+                            LaunchConfiguration("rviz_point_stride"), value_type=int
+                        ),
+                    }
                 ],
             ),
         ]

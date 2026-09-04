@@ -72,12 +72,20 @@ ament_target_dependencies(mid360_scan_projector
   tf2_ros
 )
 
+add_executable(mid360_rviz_relay src/mid360_rviz_relay.cpp)
+target_compile_features(mid360_rviz_relay PUBLIC cxx_std_17)
+ament_target_dependencies(mid360_rviz_relay
+  rclcpp
+  sensor_msgs
+)
+
 install(TARGETS
   g1_bridge_node
   g1_hardware_telemetry_node
   dex3_bridge_node
   odom_tf_node
   mid360_scan_projector
+  mid360_rviz_relay
   DESTINATION lib/${PROJECT_NAME}
 )
 install(DIRECTORY config launch DESTINATION share/${PROJECT_NAME})
