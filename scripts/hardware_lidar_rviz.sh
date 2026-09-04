@@ -68,7 +68,7 @@ docker_args=(
 cyclonedds_general=""
 cyclonedds_discovery=""
 if [[ -n "${hardware_network_interface}" ]]; then
-  cyclonedds_general="<General><Interfaces><NetworkInterface name=\"${hardware_network_interface}\" priority=\"default\" multicast=\"default\" /></Interfaces></General>"
+  cyclonedds_general="<General><Interfaces><NetworkInterface name=\"${hardware_network_interface}\" priority=\"default\" multicast=\"default\" /></Interfaces><MulticastRecvNetworkInterfaceAddresses>all</MulticastRecvNetworkInterfaceAddresses></General>"
 fi
 if [[ -n "${hardware_peers}" ]]; then
   cyclonedds_peers=""
@@ -80,7 +80,7 @@ if [[ -n "${hardware_peers}" ]]; then
     fi
     cyclonedds_peers+="<Peer Address=\"${peer}\" />"
   done
-  cyclonedds_discovery="<Discovery><Peers>${cyclonedds_peers}</Peers></Discovery>"
+  cyclonedds_discovery="<Discovery><ParticipantIndex>auto</ParticipantIndex><MaxAutoParticipantIndex>120</MaxAutoParticipantIndex><Peers>${cyclonedds_peers}</Peers></Discovery>"
 fi
 if [[ -n "${cyclonedds_general}${cyclonedds_discovery}" ]]; then
   docker_args+=(

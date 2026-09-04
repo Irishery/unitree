@@ -76,7 +76,7 @@ _g1_hardware_setup() {
       interfaces_xml+="<NetworkInterface name=\"${network_interface}\" priority=\"default\" multicast=\"default\" />"
       interface_list+="${interface_list:+,}${network_interface}"
     done
-    general_xml="<General><Interfaces>${interfaces_xml}</Interfaces></General>"
+    general_xml="<General><Interfaces>${interfaces_xml}</Interfaces><MulticastRecvNetworkInterfaceAddresses>all</MulticastRecvNetworkInterfaceAddresses></General>"
   else
     interface_list="auto"
     general_xml=""
@@ -97,7 +97,7 @@ _g1_hardware_setup() {
     fi
   done
   if [[ -n "${peers_xml}" ]]; then
-    discovery_xml="<Discovery><Peers>${peers_xml}</Peers></Discovery>"
+    discovery_xml="<Discovery><ParticipantIndex>auto</ParticipantIndex><MaxAutoParticipantIndex>120</MaxAutoParticipantIndex><Peers>${peers_xml}</Peers></Discovery>"
   else
     discovery_xml=""
   fi

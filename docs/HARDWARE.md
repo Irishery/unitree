@@ -50,7 +50,7 @@ CycloneDDS on both interfaces:
 ```bash
 cd /home/unitree/unitree
 export G1_HARDWARE_PEERS=10.0.88.165
-source scripts/hardware_env.sh enP8p1s0 wlxfc23cd952598
+source scripts/hardware_env.sh wlxfc23cd952598 enP8p1s0
 ```
 
 It fixes `ROS_DISTRO=humble`, `ROS_DOMAIN_ID=0` and
@@ -74,7 +74,7 @@ Terminal 1 on the robot:
 
 ```bash
 cd /home/unitree/unitree
-source scripts/hardware_env.sh enP8p1s0 wlxfc23cd952598
+source scripts/hardware_env.sh wlxfc23cd952598 enP8p1s0
 ros2 launch g1_bridge hardware_telemetry.launch.py
 ```
 
@@ -131,7 +131,7 @@ another terminal, start only the LiDAR:
 
 ```bash
 cd /home/unitree/unitree
-source scripts/hardware_env.sh enP8p1s0 wlxfc23cd952598
+source scripts/hardware_env.sh wlxfc23cd952598 enP8p1s0
 ros2 launch g1_bridge mid360.launch.py
 ```
 
@@ -151,7 +151,7 @@ After the TF checks pass, start the following in a **third** robot terminal:
 
 ```bash
 cd /home/unitree/unitree
-source scripts/hardware_env.sh enP8p1s0 wlxfc23cd952598
+source scripts/hardware_env.sh wlxfc23cd952598 enP8p1s0
 ros2 launch g1_bridge hardware_mapping.launch.py
 ```
 
@@ -285,7 +285,7 @@ start the separately gated high-level interface:
 
 ```bash
 cd /home/unitree/unitree
-source scripts/hardware_env.sh enP8p1s0 wlxfc23cd952598
+source scripts/hardware_env.sh wlxfc23cd952598 enP8p1s0
 ros2 launch g1_bridge hardware_motion.launch.py \
   motion_interface:=true allow_hardware_motion:=true
 ```
