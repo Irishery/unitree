@@ -1,4 +1,5 @@
 #include <cmath>
+#include <cstdint>
 #include <functional>
 #include <limits>
 #include <memory>
@@ -40,9 +41,10 @@ class Mid360ScanProjector final : public rclcpp::Node {
     range_max_ = declare_parameter<double>("range_max", 10.0);
     angle_increment_ = declare_parameter<double>("angle_increment", 0.00872664626);
     transform_timeout_s_ = declare_parameter<double>("transform_timeout_s", 0.10);
+    frame_stride_ = declare_parameter<int64_t>("frame_stride", 2);
 
     if (min_height_ >= max_height_ || range_min_ <= 0.0 || range_min_ >= range_max_ ||
-        angle_increment_ <= 0.0 || angle_increment_ > 2.0 * kPi) {
+        angle_increment_ <= 0.0 || angle_increment_ > 2.0 * kPi || frame_stride_ < 1) {
       throw std::runtime_error("Invalid Mid-360 scan projector parameters");
     }
 
@@ -56,9 +58,9 @@ class Mid360ScanProjector final : public rclcpp::Node {
     RCLCPP_INFO(
         get_logger(),
         "Passive Mid-360 projection: %s -> %s in %s; height [%.2f, %.2f] m, "
-        "self-mask x=[%.2f, %.2f], y=[%.2f, %.2f]",
+        "self-mask x=[%.2f, %.2f], y=[%.2f, %.2f], every %ld frame",
         cloud_topic_.c_str(), scan_topic_.c_str(), base_frame_.c_str(), min_height_, max_height_,
-        self_min_x_, self_max_x_, self_min_y_, self_max_y_);
+        self_min_x_, self_max_x_, self_min_y_, self_max_y_, static_cast<long>(frame_stride_));
   }
 
  private:
@@ -68,6 +70,11 @@ class Mid360ScanProjector final : public rclcpp::Node {
   }
 
   void on_cloud(const sensor_msgs::msg::PointCloud2::SharedPtr cloud) {
+    const uint64_t frame_index = frame_index_++;
+    if (frame_index % static_cast<uint64_t>(frame_stride_) != 0U) {
+      return;
+    }
+
     if (cloud->header.frame_id.empty()) {
       RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 5000, "Ignoring cloud without frame_id");
       return;
@@ -166,6 +173,8 @@ class Mid360ScanProjector final : public rclcpp::Node {
   double range_max_{10.0};
   double angle_increment_{0.00872664626};
   double transform_timeout_s_{0.10};
+  int64_t frame_stride_{2};
+  uint64_t frame_index_{0U};
   std::unique_ptr<tf2_ros::Buffer> tf_buffer_;
   std::shared_ptr<tf2_ros::TransformListener> tf_listener_;
   rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr cloud_sub_;

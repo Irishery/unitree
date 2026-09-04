@@ -163,8 +163,9 @@ After the TF checks pass, start the following in a **third** robot terminal:
 
 ```bash
 cd /home/unitree/unitree
+export G1_HARDWARE_PEERS=10.0.88.165:7410
 source scripts/hardware_env.sh wlxfc23cd952598 enP8p1s0
-ros2 launch g1_bridge hardware_mapping.launch.py
+./scripts/hardware_mapping_safe.sh
 ```
 
 Install the one missing dependency first if this launch reports that
@@ -175,7 +176,10 @@ sudo apt update
 sudo apt install ros-humble-slam-toolbox
 ```
 
-The launch performs only this data path:
+The safe wrapper starts the passive launch with `nice=10` and idle I/O priority
+when supported. The physical profile processes every second 10 Hz cloud (5 Hz
+scan), updates the map every 5 seconds and disables interactive graph editing.
+It performs only this data path:
 
 ```text
 /mid360/points -> g1_mid360_scan_projector -> /scan -> SLAM Toolbox -> /map
@@ -190,7 +194,7 @@ beam. It has **no** `/cmd_vel` subscriber or publisher, no Nav2 process, no
 First inspect the projection without SLAM:
 
 ```bash
-ros2 launch g1_bridge hardware_mapping.launch.py slam:=false
+./scripts/hardware_mapping_safe.sh slam:=false
 timeout 8 ros2 topic hz /scan
 ```
 

@@ -44,6 +44,7 @@ def generate_launch_description():
             DeclareLaunchArgument("max_height", default_value="1.60"),
             DeclareLaunchArgument("range_min", default_value="0.55"),
             DeclareLaunchArgument("range_max", default_value="10.0"),
+            DeclareLaunchArgument("cloud_frame_stride", default_value="2"),
             Node(
                 package="g1_bridge",
                 executable="mid360_scan_projector",
@@ -65,6 +66,9 @@ def generate_launch_description():
                         ),
                         "range_max": ParameterValue(
                             LaunchConfiguration("range_max"), value_type=float
+                        ),
+                        "frame_stride": ParameterValue(
+                            LaunchConfiguration("cloud_frame_stride"), value_type=int
                         ),
                     }
                 ],
