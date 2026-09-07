@@ -105,8 +105,12 @@ class ExitStatusTests(unittest.TestCase):
             code = probe.main()
         node.stop_and_disarm.assert_called_once()
         node.destroy_node.assert_called_once()
-        expected_duration = 4.0 if args else 0.5
-        node.publish_for.assert_called_once_with(0.05, expected_duration)
+        expected = {
+            (): (0.05, 0.5),
+            ("--gait-start",): (0.20, 0.5),
+            ("--twenty-cm",): (0.20, 1.0),
+        }[tuple(args or [])]
+        node.publish_for.assert_called_once_with(*expected)
         return code
 
     def test_unconfirmed_disarm_is_failure(self):
@@ -120,6 +124,9 @@ class ExitStatusTests(unittest.TestCase):
 
     def test_twenty_cm_keeps_speed_and_bounds_duration(self):
         self.assertEqual(self.run_main(True, args=["--twenty-cm"]), 0)
+
+    def test_gait_start_uses_verified_threshold_and_short_duration(self):
+        self.assertEqual(self.run_main(True, args=["--gait-start"]), 0)
 
     def test_twenty_cm_interrupt_still_disarms(self):
         self.assertEqual(self.run_main(True, KeyboardInterrupt(), ["--twenty-cm"]), 130)

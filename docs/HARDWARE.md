@@ -386,18 +386,30 @@ G1_ALLOW_MOTION_TEST=YES ./scripts/hardware_motion_probe.py
 ros2 topic echo /g1/control_enabled --once
 ```
 
-The final state must be `false`, and the robot must stop promptly. Disable at
+The final state must be `false`, and the robot must stop promptly. This default
+probe may only lean or twitch because `0.05 m/s` is below the observed
+gait-start threshold on this G1. Disable at
 once with the physical controller if it behaves unexpectedly. This probe is
 the only motion stage added here: the Nav2 path is **not yet connected** to the
 legs. Connecting a controller to `/g1/motion_cmd_vel` is permitted only after
 the path clearance, bounded motion, watchdog stop, and manual disarm tests all
 pass on the exact robot.
 
-### Follow-up: nominal 20 cm walking probe
+### Follow-up: gait-start and nominal 20 cm walking probes
 
-Only after the short probe has visibly moved the robot and software disarming
-has been confirmed, the fixed `--twenty-cm` profile sends **0.05 m/s for 4 seconds**,
-then zero for 0.5 seconds and requests disarming. The default remains 0.5 seconds.
+Only after the default command path and software disarming have been confirmed,
+restart the isolated bridge with the explicitly higher forward limit:
+
+```bash
+ros2 launch g1_bridge hardware_motion.launch.py \
+  motion_interface:=true allow_hardware_motion:=true max_linear_x:=0.2
+```
+
+The fixed `--gait-start` profile sends **0.20 m/s for 0.5 seconds**. After that
+test has visibly initiated walking and stopped safely, `--twenty-cm` sends
+**0.20 m/s for 1 second**, then zero for 0.5 seconds and requests disarming.
+The bridge's default limit remains 0.05 m/s; the higher limit is never enabled
+implicitly.
 This is a **timed** probe: 20 cm is nominal (`speed * time`), not a measured
 distance or guaranteed minimum. It does not extend motion to compensate for
 slippage, slow acceleration, or obstacles. The bridge uses the official
@@ -419,6 +431,14 @@ ros2 service call /g1/enable_control std_srvs/srv/SetBool '{data: true}'
 # Continue only on service success and data: true:
 ros2 topic echo /g1/control_enabled --once
 set -o pipefail
+G1_ALLOW_MOTION_TEST=YES ./scripts/hardware_motion_probe.py --gait-start \
+  2>&1 | tee ~/g1_motion_gait_start.log
+echo "gait_start_exit_code=${PIPESTATUS[0]}"
+ros2 topic echo /g1/control_enabled --once
+
+# Re-arm only after the short gait-start test stopped and ended with false.
+ros2 service call /g1/enable_control std_srvs/srv/SetBool '{data: true}'
+ros2 topic echo /g1/control_enabled --once
 G1_ALLOW_MOTION_TEST=YES ./scripts/hardware_motion_probe.py --twenty-cm \
   2>&1 | tee ~/g1_motion_20cm.log
 echo "probe_exit_code=${PIPESTATUS[0]}"

@@ -10,8 +10,12 @@
 6. Never attach a Jazzy node or a different RMW implementation to the physical
    Humble/CycloneDDS domain. Stop immediately if any process repeatedly prints
    `sequence size exceeds remaining buffer`.
-7. Enable with `/g1/enable_control`, then run the fixed
-   `scripts/hardware_motion_probe.py`: `0.05 m/s` for 0.5 second.
+7. Enable with `/g1/enable_control`, then run the fixed default
+   `scripts/hardware_motion_probe.py`: `0.05 m/s` for 0.5 second. This verifies
+   the command path but may remain below the physical gait-start threshold.
+   The separate `--gait-start` profile uses the verified `0.20 m/s` for only
+   0.5 second and requires the bridge to be launched explicitly with
+   `max_linear_x:=0.2`.
 8. Verify that releasing the teleop key stops the robot within the configured watchdog interval.
 9. Verify that disabling the service stops commands before trying higher limits.
 10. Keep Nav2 planning disconnected from `/g1/motion_cmd_vel` until the global

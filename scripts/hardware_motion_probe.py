@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Fixed, bounded walking probes; --twenty-cm is timed, not odometry controlled."""
+"""Fixed, bounded walking probes; distances are timed, not odometry controlled."""
 
 import os
 import signal
@@ -24,10 +24,18 @@ from std_srvs.srv import SetBool
 
 
 TOPIC = "/g1/motion_cmd_vel"
-SPEED_MPS = 0.05
-MOVE_SECONDS = 0.5
-TWENTY_CM_SECONDS = 0.20 / SPEED_MPS
+DEFAULT_SPEED_MPS = 0.05
+DEFAULT_MOVE_SECONDS = 0.5
+GAIT_SPEED_MPS = 0.20
+GAIT_START_SECONDS = 0.5
+TWENTY_CM_SECONDS = 0.20 / GAIT_SPEED_MPS
 RATE_HZ = 20.0
+
+PROFILES = {
+    (): (DEFAULT_SPEED_MPS, DEFAULT_MOVE_SECONDS, False),
+    ("--gait-start",): (GAIT_SPEED_MPS, GAIT_START_SECONDS, False),
+    ("--twenty-cm",): (GAIT_SPEED_MPS, TWENTY_CM_SECONDS, True),
+}
 
 
 class MotionProbe(Node):
@@ -102,10 +110,14 @@ def interrupt_probe(_signum, _frame):
 
 
 def main():
-    if sys.argv[1:] not in ([], ["--twenty-cm"]):
-        print("Usage: hardware_motion_probe.py [--twenty-cm]", file=sys.stderr)
+    args = tuple(sys.argv[1:])
+    if args not in PROFILES:
+        print(
+            "Usage: hardware_motion_probe.py [--gait-start|--twenty-cm]",
+            file=sys.stderr,
+        )
         return 2
-    move_seconds = TWENTY_CM_SECONDS if sys.argv[1:] else MOVE_SECONDS
+    speed_mps, move_seconds, nominal_twenty_cm = PROFILES[args]
 
     rclpy.init(args=[], signal_handler_options=SignalHandlerOptions.NO)
     previous_signals = {
@@ -125,8 +137,8 @@ def main():
         if node.count_subscribers(TOPIC) < 1:
             raise RuntimeError(f"Refusing to move: no bridge subscriber on {TOPIC}")
 
-        print(f"Bounded probe: +{SPEED_MPS:.2f} m/s for {move_seconds:g} s, then stop and disarm.")
-        if sys.argv[1:]:
+        print(f"Bounded probe: +{speed_mps:.2f} m/s for {move_seconds:g} s, then stop and disarm.")
+        if nominal_twenty_cm:
             print("Nominal distance 20 cm; actual distance is not measured or guaranteed.")
         print("Starting in 3 seconds; Ctrl-C aborts.")
         for remaining in (3, 2, 1):
@@ -136,7 +148,7 @@ def main():
                 rclpy.spin_once(node, timeout_sec=0.1)
                 if node.control_enabled is not True:
                     raise RuntimeError("Software control was disabled during countdown")
-        node.publish_for(SPEED_MPS, move_seconds)
+        node.publish_for(speed_mps, move_seconds)
         print("Bounded velocity publication completed; robot movement is not verified.")
     except KeyboardInterrupt:
         print("Interrupted; sending stop.")
