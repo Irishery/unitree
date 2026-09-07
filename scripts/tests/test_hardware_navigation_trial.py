@@ -174,6 +174,12 @@ class PathPolicyTests(unittest.TestCase):
         self.assertAlmostEqual(length, 0.4)
         self.assertAlmostEqual(turn, math.pi / 2)
 
+    def test_zero_turn_limit_allows_curved_path(self):
+        self.assertFalse(goal_bridge.optional_limit_exceeded(math.pi / 2, 0.0))
+
+    def test_positive_turn_limit_can_still_be_enabled_explicitly(self):
+        self.assertTrue(goal_bridge.optional_limit_exceeded(math.pi / 2, 0.35))
+
     def test_tiny_segments_do_not_create_false_turns(self):
         length, turn = goal_bridge.path_metrics(
             make_path([(0, 0), (0.001, 0.001), (0.2, 0), (0.3, 0)])

@@ -48,18 +48,24 @@ def path_metrics(path):
     return length, heading_change
 
 
+def optional_limit_exceeded(value, limit):
+    """Treat a non-positive limit as disabled."""
+    return limit > 0.0 and value > limit
+
+
 class NavigationGoalBridge(Node):
     def __init__(self):
         super().__init__("g1_navigation_goal_bridge")
         self.declare_parameter("min_path_length", 0.10)
         self.declare_parameter("max_path_length", 0.0)
-        self.declare_parameter("max_path_heading_change", 0.35)
+        # Zero disables the former trial-only accumulated-turn limit.
+        self.declare_parameter("max_path_heading_change", 0.0)
         self._min_path_length = float(self.get_parameter("min_path_length").value)
         self._max_path_length = float(self.get_parameter("max_path_length").value)
         self._max_path_heading_change = float(
             self.get_parameter("max_path_heading_change").value
         )
-        if self._min_path_length < 0.0 or (
+        if self._min_path_length < 0.0 or self._max_path_heading_change < 0.0 or (
             self._max_path_length > 0.0
             and self._min_path_length >= self._max_path_length
         ):
@@ -122,7 +128,7 @@ class NavigationGoalBridge(Node):
             else f"{self._min_path_length:.2f}..{self._max_path_length:.2f} m"
         )
         self.get_logger().warning(
-            f"Navigation ready: arm explicitly, then send a nearly straight "
+            f"Navigation ready: arm explicitly, then send a "
             f"{length_text} /navigate_to_pose action goal"
         )
 
@@ -324,7 +330,9 @@ class NavigationGoalBridge(Node):
             )
             self._request_disarm()
             return
-        if heading_change > self._max_path_heading_change:
+        if optional_limit_exceeded(
+            heading_change, self._max_path_heading_change
+        ):
             self._request_pending = False
             self._publish_state(
                 f"REJECTED_PATH_TURN_{heading_change:.2f}RAD"

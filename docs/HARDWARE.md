@@ -278,7 +278,7 @@ recoveries, backing up, spinning, or waypoint follower. A separate guard:
 - removes lateral velocity;
 - rejects reverse and rotation-in-place commands;
 - sends zero if the Nav2 command is stale for more than 0.20 second;
-- rejects paths shorter than 0.10 m or with over 0.35 rad accumulated turn;
+- rejects paths shorter than 0.10 m, but has no accumulated-turn limit;
 - requests software disarm after success, cancellation, or failure.
 
 Keep the robot on its feet with the gantry loose enough to walk, clear the fall
@@ -304,8 +304,8 @@ required, but the bridge still starts disarmed:
 
 ```bash
 cd ~/unitree
-unset G1_HARDWARE_PEERS
-source scripts/hardware_env.sh enP8p1s0
+export G1_HARDWARE_PEERS=10.0.88.165:7410
+source scripts/hardware_env.sh wlxfc23cd952598 enP8p1s0
 ros2 launch g1_bridge hardware_navigation_trial.launch.py \
   motion_interface:=true \
   allow_hardware_motion:=true \
@@ -317,8 +317,8 @@ terminal:
 
 ```bash
 cd ~/unitree
-unset G1_HARDWARE_PEERS
-source scripts/hardware_env.sh enP8p1s0
+export G1_HARDWARE_PEERS=10.0.88.165:7410
+source scripts/hardware_env.sh wlxfc23cd952598 enP8p1s0
 
 ros2 lifecycle get /planner_server
 ros2 lifecycle get /controller_server
@@ -345,8 +345,8 @@ The expected states are `data: true` and `ARMED_WAITING_FOR_GOAL`. In laptop
 RViz use **Navigation2 Goal** to start an action-backed goal; its **Cancel**
 button cancels the internal `FollowPath` action and requests software disarm.
 The older **2D Goal Pose** topic tool remains supported, but it has no built-in
-RViz cancel button. The orientation arrow must point forward. A sharply curved,
-sideways or rear path is rejected and disarmed without sending walking commands.
+RViz cancel button. Curved paths are allowed; the velocity guard still rejects
+reverse, lateral and rotation-in-place commands and clamps commanded yaw speed.
 There is no upper path-length limit; select a distance suitable for the currently
 cleared and supervised test area.
 
@@ -392,7 +392,10 @@ It does use host networking in both directions: the Navigation 2 panel can send
 a guarded goal or cancel request to the robot-side action server. The robot-side
 software-control gate must still be armed explicitly before a goal is accepted.
 
-Keep `hardware_telemetry.launch.py` and `mid360.launch.py` running on the robot.
+Keep `mid360.launch.py` running on the robot. Use
+`hardware_telemetry.launch.py` during passive inspection, or
+`hardware_navigation_trial.launch.py` during guarded navigation; never run
+both because the navigation launch already supplies the telemetry/TF nodes.
 On the laptop graphical desktop, connected to the same DDS-capable network,
 run:
 
