@@ -47,6 +47,8 @@ class G1Bridge final : public rclcpp::Node {
     low_state_topic_ = declare_parameter<std::string>("low_state_topic", "lowstate");
     command_request_topic_ =
         declare_parameter<std::string>("command_request_topic", "/api/sport/request");
+    cmd_vel_topic_ =
+        declare_parameter<std::string>("cmd_vel_topic", "/g1/motion_cmd_vel");
     joint_state_topic_ =
         declare_parameter<std::string>("joint_state_topic", "/g1/joint_states");
     imu_topic_ = declare_parameter<std::string>("imu_topic", "/g1/imu/data");
@@ -61,9 +63,9 @@ class G1Bridge final : public rclcpp::Node {
     command_rate_hz_ = declare_parameter<double>("command_publish_rate_hz", 20.0);
     telemetry_rate_hz_ = declare_parameter<double>("telemetry_publish_rate_hz", 50.0);
     command_duration_s_ = declare_parameter<double>("command_duration_s", 0.2);
-    max_linear_x_ = declare_parameter<double>("max_linear_x", 0.5);
-    max_linear_y_ = declare_parameter<double>("max_linear_y", 0.3);
-    max_angular_z_ = declare_parameter<double>("max_angular_z", 0.8);
+    max_linear_x_ = declare_parameter<double>("max_linear_x", 0.05);
+    max_linear_y_ = declare_parameter<double>("max_linear_y", 0.0);
+    max_angular_z_ = declare_parameter<double>("max_angular_z", 0.15);
     joint_indices_ = declare_parameter<std::vector<int64_t>>(
         "joint_indices", std::vector<int64_t>{});
     joint_names_ = declare_parameter<std::vector<std::string>>(
@@ -72,8 +74,17 @@ class G1Bridge final : public rclcpp::Node {
     if (joint_indices_.size() != joint_names_.size() || joint_names_.empty()) {
       throw std::runtime_error("joint_indices and joint_names must be non-empty and equal-sized");
     }
-    if (command_rate_hz_ <= 0.0 || telemetry_rate_hz_ <= 0.0 || cmd_timeout_s_ <= 0.0) {
-      throw std::runtime_error("rates and timeouts must be positive");
+    const bool finite_parameters =
+        std::isfinite(low_state_timeout_s_) && std::isfinite(cmd_timeout_s_) &&
+        std::isfinite(command_rate_hz_) && std::isfinite(telemetry_rate_hz_) &&
+        std::isfinite(command_duration_s_) && std::isfinite(max_linear_x_) &&
+        std::isfinite(max_linear_y_) && std::isfinite(max_angular_z_);
+    if (!finite_parameters || command_rate_hz_ <= 0.0 || command_rate_hz_ > 100.0 ||
+        telemetry_rate_hz_ <= 0.0 || telemetry_rate_hz_ > 200.0 ||
+        low_state_timeout_s_ <= 0.0 || cmd_timeout_s_ <= 0.0 ||
+        command_duration_s_ <= 0.0 || command_duration_s_ > 1.0 ||
+        max_linear_x_ < 0.0 || max_linear_y_ < 0.0 || max_angular_z_ < 0.0) {
+      throw std::runtime_error("invalid G1 motion rate, timeout, duration, or velocity limit");
     }
 
     joint_pub_ = create_publisher<sensor_msgs::msg::JointState>(joint_state_topic_, 10);
@@ -90,7 +101,7 @@ class G1Bridge final : public rclcpp::Node {
       command_pub_ =
           create_publisher<unitree_api::msg::Request>(command_request_topic_, 10);
       cmd_vel_sub_ = create_subscription<geometry_msgs::msg::Twist>(
-          "/cmd_vel", rclcpp::QoS(10),
+          cmd_vel_topic_, rclcpp::SensorDataQoS().keep_last(1),
           std::bind(&G1Bridge::on_cmd_vel, this, std::placeholders::_1));
       enable_service_ = create_service<std_srvs::srv::SetBool>(
           "/g1/enable_control",
@@ -180,6 +191,17 @@ class G1Bridge final : public rclcpp::Node {
   }
 
   void on_cmd_vel(const geometry_msgs::msg::Twist::SharedPtr msg) {
+    if (!std::isfinite(msg->linear.x) || !std::isfinite(msg->linear.y) ||
+        !std::isfinite(msg->angular.z)) {
+      desired_vx_ = desired_vy_ = desired_wz_ = 0.0;
+      last_cmd_time_ = std::chrono::steady_clock::now() - std::chrono::seconds(10);
+      watchdog_stopped_ = true;
+      if (control_enabled_) {
+        publish_velocity(0.0, 0.0, 0.0);
+      }
+      RCLCPP_ERROR(get_logger(), "Rejected non-finite velocity command and sent stop");
+      return;
+    }
     desired_vx_ = clamp_symmetric(msg->linear.x, max_linear_x_);
     desired_vy_ = clamp_symmetric(msg->linear.y, max_linear_y_);
     desired_wz_ = clamp_symmetric(msg->angular.z, max_angular_z_);
@@ -285,12 +307,14 @@ class G1Bridge final : public rclcpp::Node {
         "motion_interface_enabled", motion_interface_enabled_ ? "true" : "false"));
     status.values.push_back(diagnostic_value(
         "cmd_watchdog_stopped", watchdog_stopped_ ? "true" : "false"));
+    status.values.push_back(diagnostic_value("cmd_vel_topic", cmd_vel_topic_));
     array.status.push_back(std::move(status));
     diagnostics_pub_->publish(array);
   }
 
   std::string low_state_topic_;
   std::string command_request_topic_;
+  std::string cmd_vel_topic_;
   std::string joint_state_topic_;
   std::string imu_topic_;
   std::string imu_frame_id_;
@@ -304,9 +328,9 @@ class G1Bridge final : public rclcpp::Node {
   double command_rate_hz_{20.0};
   double telemetry_rate_hz_{50.0};
   double command_duration_s_{0.2};
-  double max_linear_x_{0.5};
-  double max_linear_y_{0.3};
-  double max_angular_z_{0.8};
+  double max_linear_x_{0.05};
+  double max_linear_y_{0.0};
+  double max_angular_z_{0.15};
   double desired_vx_{0.0};
   double desired_vy_{0.0};
   double desired_wz_{0.0};

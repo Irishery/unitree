@@ -88,6 +88,10 @@ install(TARGETS
   mid360_rviz_relay
   DESTINATION lib/${PROJECT_NAME}
 )
+install(PROGRAMS
+  scripts/planner_goal_bridge.py
+  DESTINATION lib/${PROJECT_NAME}
+)
 install(DIRECTORY config launch DESTINATION share/${PROJECT_NAME})
 install(FILES
   ../../vendor/g1_description/g1_29dof_rev_1_0.urdf

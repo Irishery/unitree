@@ -1,6 +1,6 @@
 """Explicitly gated high-level locomotion bridge for a physical G1.
 
-This launch never starts armed. It only exposes the /cmd_vel command path
+This launch never starts armed. It only exposes the /g1/motion_cmd_vel command path
 after both launch-time safety acknowledgements are set to true.
 """
 
@@ -57,6 +57,16 @@ def _launch_motion(context):
                     "low_state_topic": "/lowstate",
                     "motion_interface_enabled": True,
                     "start_control_enabled": False,
+                    "cmd_vel_topic": LaunchConfiguration("cmd_vel_topic"),
+                    "max_linear_x": ParameterValue(
+                        LaunchConfiguration("max_linear_x"), value_type=float
+                    ),
+                    "max_linear_y": ParameterValue(
+                        LaunchConfiguration("max_linear_y"), value_type=float
+                    ),
+                    "max_angular_z": ParameterValue(
+                        LaunchConfiguration("max_angular_z"), value_type=float
+                    ),
                 },
             ],
         ),
@@ -99,6 +109,12 @@ def generate_launch_description():
             DeclareLaunchArgument("config", default_value=default_config),
             DeclareLaunchArgument("motion_interface", default_value="false"),
             DeclareLaunchArgument("allow_hardware_motion", default_value="false"),
+            DeclareLaunchArgument(
+                "cmd_vel_topic", default_value="/g1/motion_cmd_vel"
+            ),
+            DeclareLaunchArgument("max_linear_x", default_value="0.05"),
+            DeclareLaunchArgument("max_linear_y", default_value="0.0"),
+            DeclareLaunchArgument("max_angular_z", default_value="0.15"),
             DeclareLaunchArgument(
                 "odom_source", default_value="/state_estimator/odom_pelvis"
             ),

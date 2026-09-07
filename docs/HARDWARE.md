@@ -108,7 +108,7 @@ After launch:
 
 The next stage is to expose this standard ROS graph to the laptop and inspect
 the physical model in RViz. LiDAR activation and frame calibration come before
-SLAM, Nav2, or any walking command.
+SLAM, path planning, or any walking command.
 
 ## Head Livox Mid-360: raw cloud and reduced RViz relay
 
@@ -215,6 +215,53 @@ ros2 service call /slam_toolbox/save_map slam_toolbox/srv/SaveMap \
 Create `/home/unitree/g1_maps` first if needed. Nav2 is intentionally not part
 of this launch; it will be added only after the scan and map have been reviewed.
 
+## Planning a path without movement
+
+Do this only after `/map`, `/scan`, and the complete
+`map -> odom -> base_footprint` TF chain remain healthy while the robot is in
+Regular Mode. Install the Nav2 planning packages once on the robot:
+
+```bash
+sudo apt update
+sudo apt install ros-humble-navigation2
+```
+
+Rebuild the updated workspace, keep telemetry, the separate Mid-360 launch and
+mapping running, then start planning in another robot terminal:
+
+```bash
+cd /home/unitree/unitree
+export G1_HARDWARE_PEERS=10.0.88.165:7410
+source scripts/hardware_env.sh wlxfc23cd952598 enP8p1s0
+ros2 launch g1_bridge hardware_planning.launch.py
+```
+
+This starts only `planner_server`, its global costmap, a lifecycle manager and
+an RViz goal-to-planner adapter. It has no `controller_server`, `bt_navigator`,
+velocity smoother, `/cmd_vel` publisher, or Unitree command publisher. Verify
+that separation before requesting a path:
+
+```bash
+ros2 lifecycle get /planner_server
+ros2 node list | grep -E 'planner|costmap|controller|bt_navigator|velocity'
+ros2 topic info /cmd_vel
+ros2 topic info /g1/motion_cmd_vel
+timeout 8 ros2 topic hz /global_costmap/costmap
+```
+
+`planner_server` must be active; controller/BT/velocity nodes and velocity
+publishers must be absent. On the laptop, restart the hardware RViz profile,
+select **2D Goal Pose**, and click a known free cell. The green `/plan` line
+must go around occupied and inflated cells. The same check can be requested by
+coordinates without printing the entire path:
+
+```bash
+./scripts/hardware_plan_goal.py 1.0 0.0 0.0
+```
+
+Do not proceed if the path crosses the table, unknown map space, or comes
+closer to an obstacle than the configured 0.45 m robot radius plus inflation.
+
 ### RViz on the Ubuntu 24.04 laptop
 
 The laptop has Ubuntu 24.04 without a native ROS installation. Build the
@@ -263,7 +310,8 @@ The profile selects `odom` as the fixed frame and displays the reduced
 locally on the robot for projection, mapping and later navigation.
 The factory URDF mounts `mid360_link` with an approximately 180-degree roll;
 using the sensor frame as RViz's fixed frame therefore makes the raw view look
-upside-down. `odom` applies that fixed TF and is the correct world view. If
+upside-down. `odom` applies the calibrated robot TF and remains usable before
+SLAM starts; Nav2 transforms an RViz goal from `odom` into `map`. If
 the window opens but no points appear, first verify DDS visibility from the
 same laptop terminal:
 
@@ -307,12 +355,40 @@ start the separately gated high-level interface:
 
 ```bash
 cd /home/unitree/unitree
-source scripts/hardware_env.sh wlxfc23cd952598 enP8p1s0
+unset G1_HARDWARE_PEERS
+source scripts/hardware_env.sh enP8p1s0
 ros2 launch g1_bridge hardware_motion.launch.py \
   motion_interface:=true allow_hardware_motion:=true
 ```
 
-This exposes `/cmd_vel` and `/g1/enable_control` but still starts disarmed. It
-never publishes `/lowcmd`. The service may be enabled only with the robot on
-its gantry, a clear fall radius, the official controller in hand, fresh
-`/lowstate`, and no other sport-request publisher under test.
+Stop `hardware_telemetry.launch.py` before this command because the motion
+launch replaces it and supplies the same odometry/TF nodes. For the very first
+bounded walking probe, also stop mapping and planning to isolate locomotion and
+minimize CPU load; they can be reintroduced after the stop test passes. This
+exposes the isolated `/g1/motion_cmd_vel` input and `/g1/enable_control`, but
+still starts disarmed. It never publishes `/lowcmd`.
+
+For the first test, keep the G1 on its gantry, clear its full fall radius, put
+it in the normal Unitree Regular Mode, hold the official controller, and arm
+the bridge explicitly:
+
+```bash
+ros2 service call /g1/enable_control std_srvs/srv/SetBool '{data: true}'
+ros2 topic echo /g1/control_enabled --once
+```
+
+The second command must show `data: true`. Run the fixed probe; it accepts no
+speed or duration arguments, sends only +0.05 m/s for 0.5 seconds, then sends
+zero for 0.5 seconds and disables `/g1/enable_control`:
+
+```bash
+G1_ALLOW_MOTION_TEST=YES ./scripts/hardware_motion_probe.py
+ros2 topic echo /g1/control_enabled --once
+```
+
+The final state must be `false`, and the robot must stop promptly. Disable at
+once with the physical controller if it behaves unexpectedly. This probe is
+the only motion stage added here: the Nav2 path is **not yet connected** to the
+legs. Connecting a controller to `/g1/motion_cmd_vel` is permitted only after
+the path clearance, bounded motion, watchdog stop, and manual disarm tests all
+pass on the exact robot.

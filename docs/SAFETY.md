@@ -10,9 +10,12 @@
 6. Never attach a Jazzy node or a different RMW implementation to the physical
    Humble/CycloneDDS domain. Stop immediately if any process repeatedly prints
    `sequence size exceeds remaining buffer`.
-7. Enable with `/g1/enable_control`, then start at `0.05 m/s` for less than one second.
+7. Enable with `/g1/enable_control`, then run the fixed
+   `scripts/hardware_motion_probe.py`: `0.05 m/s` for 0.5 second.
 8. Verify that releasing the teleop key stops the robot within the configured watchdog interval.
 9. Verify that disabling the service stops commands before trying higher limits.
+10. Keep Nav2 planning disconnected from `/g1/motion_cmd_vel` until the global
+    path, bounded walking probe, watchdog stop, and manual disarm have each passed.
 
 Never test walking for the first time in low-level/debug motor-control mode. Firmware and remote-controller key combinations differ between G1 releases; use the instructions shipped with the robot to select normal locomotion mode.
 
