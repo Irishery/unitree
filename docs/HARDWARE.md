@@ -428,6 +428,41 @@ Do not repeatedly run it to force a minimum distance.
 
 ### Diagnose a bounded probe that did not move
 
+If the native API acknowledges nonzero commands but the robot only walks from
+its official controller, run the **read-only locomotion check** before changing
+speed or control modes. Keep the motion/telemetry bridge running **disarmed**,
+the official controller sticks neutral, and do not run a walking probe alongside
+this check:
+
+```bash
+cd ~/unitree
+unset G1_HARDWARE_PEERS
+source scripts/hardware_env.sh enP8p1s0
+ros2 topic echo /g1/control_enabled --once
+# Continue only if false:
+python3 scripts/hardware_loco_check.py
+```
+
+It saves one `g1_hardware_logs/loco_check_*.log` file. It inspects local SDK
+sources/metadata without importing the SDK; sends only API **7001, 7002, 7003**
+(GetFsmId, GetFsmMode, GetBalanceMode), once each, with a 5-second response timeout;
+and observes other `/api/sport/request` traffic for another 10 seconds. There is
+no velocity command (including zero), arming service call, retry, native mode
+switch, or firmware/library update. Missing/true `control_enabled` aborts the
+check; it does not silently disarm the robot for the user.
+
+The current upstream Python SDK exposes `SwitchToUserCtrl`/`SwitchToInternalCtrl`,
+but their presence does **not** prove they are required or safe for this firmware.
+This check never calls them. SDK source versions are not firmware versions.
+Raw FSM values must be interpreted against the robot's actual SDK/firmware,
+not inferred from the app's Regular Mode label.
+
+Observation is passive and BEST_EFFORT; zero observed competing messages is not
+proof that arbitration cannot occur during movement. Humble's Python message
+metadata cannot tie each request to a publisher GID; the endpoint inventory
+is logged separately and does not establish which publisher sent a request.
+Do not disable native publishers or the official controller based on their count.
+
 Do not increase velocity/duration or switch native FSM modes to guess the cause.
 The bridge now subscribes to `/api/sport/response` **only in motion-interface
 mode**. It matches both our request ID and API 7105, and records response status
