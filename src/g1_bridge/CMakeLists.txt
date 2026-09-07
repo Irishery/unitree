@@ -100,4 +100,13 @@ install(FILES
 )
 install(DIRECTORY ../../vendor/g1_description/meshes DESTINATION share/${PROJECT_NAME})
 
+if(BUILD_TESTING)
+  enable_testing()
+  add_executable(motion_response_tracker_test test/motion_response_tracker_test.cpp)
+  target_compile_features(motion_response_tracker_test PUBLIC cxx_std_17)
+  # Keep assert-based checks enabled in release test builds too.
+  target_compile_options(motion_response_tracker_test PRIVATE -UNDEBUG)
+  add_test(NAME motion_response_tracker COMMAND motion_response_tracker_test)
+endif()
+
 ament_package()

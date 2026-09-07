@@ -392,3 +392,86 @@ the only motion stage added here: the Nav2 path is **not yet connected** to the
 legs. Connecting a controller to `/g1/motion_cmd_vel` is permitted only after
 the path clearance, bounded motion, watchdog stop, and manual disarm tests all
 pass on the exact robot.
+
+### Diagnose a bounded probe that did not move
+
+Do not increase velocity/duration or switch native FSM modes to guess the cause.
+The bridge now subscribes to `/api/sport/response` **only in motion-interface
+mode**. It matches both our request ID and API 7105, and records response status
+codes. Foreign, duplicate and expired replies are ignored. The diagnostic
+timeout is 5 seconds (`command_response_timeout_s`); it does not retry commands,
+re-arm the bridge, or alter the existing command/low-state watchdogs.
+
+Capture a fresh launch log on the robot (stop the previous project motion launch
+first, do not run two bridges):
+
+```bash
+cd ~/unitree
+unset G1_HARDWARE_PEERS
+source scripts/hardware_env.sh enP8p1s0
+set -o pipefail
+ros2 launch g1_bridge hardware_motion.launch.py \
+  motion_interface:=true allow_hardware_motion:=true \
+  2>&1 | tee ~/g1_motion_start.log
+```
+
+This still starts **disarmed**. Only after the physical checklist above, use
+another robot terminal to explicitly arm and run the same fixed probe:
+
+```bash
+cd ~/unitree
+unset G1_HARDWARE_PEERS
+source scripts/hardware_env.sh enP8p1s0
+ros2 service call /g1/enable_control std_srvs/srv/SetBool '{data: true}'
+# Continue only if the service succeeds and this shows true:
+ros2 topic echo /g1/control_enabled --once
+set -o pipefail
+G1_ALLOW_MOTION_TEST=YES ./scripts/hardware_motion_probe.py \
+  2>&1 | tee ~/g1_motion_probe.log
+echo "probe_exit_code=${PIPESTATUS[0]}"
+```
+
+The probe now reports successful **software disarming** only after a successful
+SetBool response and a fresh `control_enabled=false` message. Exit code 3 means
+disarming was not confirmed: use the official controller and do not repeat the
+probe. Ctrl-C/SIGTERM attempts bounded cleanup while ROS is still alive; SIGKILL,
+process/transport failure cannot guarantee a stop. Physical observation and the
+official controller remain necessary. Exit code 0 is not proof of walking.
+
+Keep the bridge running disarmed for at least 6 seconds after the probe so all
+pending replies can expire, then collect (read-only):
+
+```bash
+timeout 5 ros2 topic echo /diagnostics diagnostic_msgs/msg/DiagnosticArray \
+  --once > ~/g1_motion_diagnostics.log
+```
+
+Send all three logs. Counters are cumulative since bridge startup, **not reset
+on disarm**:
+
+| Evidence | Meaning |
+| --- | --- |
+| `cmd_nonzero_count=0` | No valid nonzero input observed by the bridge |
+| `cmd_nonzero_count>0`, `nonzero_requests_sent=0` | Input arrived but no nonzero request was published; inspect arming/watchdog logs |
+| `nonzero_response_timeouts>0` | No matching reply within the deadline; does not prove acceptance or rejection |
+| `nonzero_responses_rejected>0` | Native API returned a nonzero status; inspect the logged code and request ID |
+| `nonzero_responses_accepted>0` | Native API replied with status 0; actual walking still requires independent confirmation |
+
+`responses_accepted` includes **zero** requests; use `nonzero_responses_accepted`
+when diagnosing walking. `last_response_code=0` is meaningful only together
+with `responses_received>0`. Historical timeouts/rejections keep the command
+diagnostic at WARN until node restart. No low-level motor command publisher,
+native mode changes, or automatic retry was added.
+
+The response fields and status interpretation follow the official
+[Unitree BaseClient](https://github.com/unitreerobotics/unitree_ros2/blob/master/example/src/include/common/base_client.hpp).
+Unlike its blocking call, the bridge observes replies asynchronously so reply
+waiting cannot block the existing command watchdog.
+
+Local regression checks (no connection to the robot):
+
+```bash
+python3 -m unittest discover -s scripts/tests -p test_hardware_motion_probe.py -v
+colcon test --packages-select g1_bridge
+colcon test-result --verbose
+```

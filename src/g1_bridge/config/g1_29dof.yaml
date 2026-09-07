@@ -2,6 +2,9 @@ g1_bridge:
   ros__parameters:
     low_state_topic: /lowstate
     command_request_topic: /api/sport/request
+    command_response_topic: /api/sport/response
+    # Diagnostics only: no retry, mode switch, or automatic re-arm on timeout.
+    command_response_timeout_s: 5.0
     # Deliberately separate from Nav2's conventional /cmd_vel. The physical
     # robot is connected to it only after staged planning and walking tests.
     cmd_vel_topic: /g1/motion_cmd_vel

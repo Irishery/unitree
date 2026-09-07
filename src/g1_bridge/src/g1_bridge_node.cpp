@@ -22,7 +22,9 @@
 #include "std_msgs/msg/bool.hpp"
 #include "std_srvs/srv/set_bool.hpp"
 #include "unitree_api/msg/request.hpp"
+#include "unitree_api/msg/response.hpp"
 #include "unitree_hg/msg/low_state.hpp"
+#include "motion_response_tracker.hpp"
 
 using namespace std::chrono_literals;
 
@@ -47,6 +49,13 @@ class G1Bridge final : public rclcpp::Node {
     low_state_topic_ = declare_parameter<std::string>("low_state_topic", "lowstate");
     command_request_topic_ =
         declare_parameter<std::string>("command_request_topic", "/api/sport/request");
+    command_response_topic_ =
+        declare_parameter<std::string>("command_response_topic", "/api/sport/response");
+    const auto response_timeout = declare_parameter<double>("command_response_timeout_s", 5.0);
+    if (!std::isfinite(response_timeout) || response_timeout <= 0.0 || response_timeout > 10.0) {
+      throw std::runtime_error("command_response_timeout_s must be in (0, 10]");
+    }
+    response_tracker_ = MotionResponseTracker(response_timeout);
     cmd_vel_topic_ =
         declare_parameter<std::string>("cmd_vel_topic", "/g1/motion_cmd_vel");
     joint_state_topic_ =
@@ -100,6 +109,9 @@ class G1Bridge final : public rclcpp::Node {
     if (motion_interface_enabled_) {
       command_pub_ =
           create_publisher<unitree_api::msg::Request>(command_request_topic_, 10);
+      command_response_sub_ = create_subscription<unitree_api::msg::Response>(
+          command_response_topic_, rclcpp::QoS(100).reliable(),
+          std::bind(&G1Bridge::on_command_response, this, std::placeholders::_1));
       cmd_vel_sub_ = create_subscription<geometry_msgs::msg::Twist>(
           cmd_vel_topic_, rclcpp::SensorDataQoS().keep_last(1),
           std::bind(&G1Bridge::on_cmd_vel, this, std::placeholders::_1));
@@ -191,8 +203,10 @@ class G1Bridge final : public rclcpp::Node {
   }
 
   void on_cmd_vel(const geometry_msgs::msg::Twist::SharedPtr msg) {
+    ++cmd_received_count_;
     if (!std::isfinite(msg->linear.x) || !std::isfinite(msg->linear.y) ||
         !std::isfinite(msg->angular.z)) {
+      ++cmd_rejected_count_;
       desired_vx_ = desired_vy_ = desired_wz_ = 0.0;
       last_cmd_time_ = std::chrono::steady_clock::now() - std::chrono::seconds(10);
       watchdog_stopped_ = true;
@@ -205,6 +219,12 @@ class G1Bridge final : public rclcpp::Node {
     desired_vx_ = clamp_symmetric(msg->linear.x, max_linear_x_);
     desired_vy_ = clamp_symmetric(msg->linear.y, max_linear_y_);
     desired_wz_ = clamp_symmetric(msg->angular.z, max_angular_z_);
+    if (desired_vx_ != 0.0 || desired_vy_ != 0.0 || desired_wz_ != 0.0) {
+      ++cmd_nonzero_count_;
+      RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 1000,
+          "Motion input received: vx=%.3f vy=%.3f wz=%.3f armed=%s",
+          desired_vx_, desired_vy_, desired_wz_, control_enabled_ ? "true" : "false");
+    }
     last_cmd_time_ = std::chrono::steady_clock::now();
     watchdog_stopped_ = false;
   }
@@ -225,7 +245,9 @@ class G1Bridge final : public rclcpp::Node {
     publish_control_enabled();
 
     response->success = true;
-    response->message = control_enabled_ ? "G1 motion control enabled" : "G1 stopped and control disabled";
+    response->message = control_enabled_
+        ? "G1 software control enabled; native acceptance not confirmed"
+        : "G1 software control disabled; zero request sent, physical stop not confirmed";
     RCLCPP_WARN(get_logger(), "%s", response->message.c_str());
   }
 
@@ -235,6 +257,7 @@ class G1Bridge final : public rclcpp::Node {
     }
     if (require_recent_low_state_ && !low_state_is_recent()) {
       if (!watchdog_stopped_) {
+        ++low_state_watchdog_count_;
         publish_velocity(0.0, 0.0, 0.0);
         watchdog_stopped_ = true;
         RCLCPP_ERROR(get_logger(), "Low-state watchdog stopped G1 commands");
@@ -247,6 +270,7 @@ class G1Bridge final : public rclcpp::Node {
                          .count();
     if (age > cmd_timeout_s_) {
       if (!watchdog_stopped_) {
+        ++cmd_watchdog_count_;
         publish_velocity(0.0, 0.0, 0.0);
         watchdog_stopped_ = true;
         RCLCPP_WARN(get_logger(), "cmd_vel watchdog sent stop");
@@ -271,11 +295,14 @@ class G1Bridge final : public rclcpp::Node {
       return;
     }
     unitree_api::msg::Request request;
+    const auto sent_at = std::chrono::steady_clock::now();
+    expire_command_responses(sent_at);
     request.header.identity.api_id = kSetVelocityApiId;
-    request.header.identity.id = static_cast<int64_t>(
+    request.header.identity.id = std::max(last_request_id_ + 1, static_cast<int64_t>(
         std::chrono::duration_cast<std::chrono::nanoseconds>(
-            std::chrono::steady_clock::now().time_since_epoch())
-            .count());
+            sent_at.time_since_epoch()).count()));
+    last_request_id_ = request.header.identity.id;
+    request.header.policy.noreply = false;
 
     std::ostringstream json;
     json.imbue(std::locale::classic());
@@ -283,6 +310,43 @@ class G1Bridge final : public rclcpp::Node {
          << "],\"duration\":" << command_duration_s_ << '}';
     request.parameter = json.str();
     command_pub_->publish(request);
+    const bool nonzero = vx != 0.0 || vy != 0.0 || wz != 0.0;
+    response_tracker_.sent(last_request_id_, nonzero, sent_at);
+    RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 1000,
+        "Unitree velocity request sent: id=%lld api=7105 vx=%.3f vy=%.3f wz=%.3f",
+        static_cast<long long>(last_request_id_), vx, vy, wz);
+  }
+
+  void expire_command_responses(SteadyTime time) {
+    const auto expired = response_tracker_.expire(time);
+    if (!expired.empty()) {
+      RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 1000,
+          "Unitree response timeout: id=%lld api=7105 nonzero=%s; acceptance unknown (no retry)",
+          static_cast<long long>(expired.back().id), expired.back().nonzero ? "true" : "false");
+    }
+  }
+
+  void on_command_response(const unitree_api::msg::Response::SharedPtr msg) {
+    const auto received_at = std::chrono::steady_clock::now();
+    expire_command_responses(received_at);
+    const auto matched = response_tracker_.response(
+        msg->header.identity.id, msg->header.identity.api_id, msg->header.status.code);
+    if (!matched) {
+      return;
+    }
+    last_response_latency_ms_ =
+        std::chrono::duration<double, std::milli>(received_at - matched->sent).count();
+    if (msg->header.status.code != 0) {
+      RCLCPP_ERROR_THROTTLE(get_logger(), *get_clock(), 1000,
+          "Unitree rejected velocity: id=%lld api=7105 code=%d nonzero=%s",
+          static_cast<long long>(matched->id), msg->header.status.code,
+          matched->nonzero ? "true" : "false");
+    } else if ((matched->nonzero && response_tracker_.nonzero_accepted == 1) ||
+               (!matched->nonzero && response_tracker_.accepted - response_tracker_.nonzero_accepted == 1)) {
+      RCLCPP_INFO(get_logger(),
+          "Unitree accepted velocity request: id=%lld api=7105 code=0 nonzero=%s (not proof of movement)",
+          static_cast<long long>(matched->id), matched->nonzero ? "true" : "false");
+    }
   }
 
   void publish_control_enabled() {
@@ -292,6 +356,7 @@ class G1Bridge final : public rclcpp::Node {
   }
 
   void publish_diagnostics() {
+    expire_command_responses(std::chrono::steady_clock::now());
     diagnostic_msgs::msg::DiagnosticArray array;
     array.header.stamp = now();
     diagnostic_msgs::msg::DiagnosticStatus status;
@@ -308,12 +373,60 @@ class G1Bridge final : public rclcpp::Node {
     status.values.push_back(diagnostic_value(
         "cmd_watchdog_stopped", watchdog_stopped_ ? "true" : "false"));
     status.values.push_back(diagnostic_value("cmd_vel_topic", cmd_vel_topic_));
+    // Cumulative since node startup; disarming does not erase test evidence.
+    const auto add_count = [&status](const char *name, uint64_t value) {
+      status.values.push_back(diagnostic_value(name, std::to_string(value)));
+    };
+    add_count("cmd_received_count", cmd_received_count_);
+    add_count("cmd_nonzero_count", cmd_nonzero_count_);
+    add_count("cmd_rejected_count", cmd_rejected_count_);
+    add_count("cmd_watchdog_count", cmd_watchdog_count_);
+    add_count("low_state_watchdog_count", low_state_watchdog_count_);
     array.status.push_back(std::move(status));
+    if (motion_interface_enabled_) {
+      diagnostic_msgs::msg::DiagnosticStatus command_status;
+      command_status.name = "Unitree G1 command responses";
+      command_status.hardware_id = "unitree_g1";
+      command_status.level = (response_tracker_.rejected || response_tracker_.timeouts)
+          ? diagnostic_msgs::msg::DiagnosticStatus::WARN
+          : diagnostic_msgs::msg::DiagnosticStatus::OK;
+      command_status.message = (response_tracker_.rejected || response_tracker_.timeouts)
+          ? "Rejection or timeout recorded since startup; inspect counters"
+          : "Command diagnostics only; does not confirm physical movement";
+      const auto add = [&command_status](const char *name, auto value) {
+        command_status.values.push_back(diagnostic_value(name, std::to_string(value)));
+      };
+      command_status.values.push_back(diagnostic_value("response_topic", command_response_topic_));
+      add("requests_sent", response_tracker_.requests);
+      add("nonzero_requests_sent", response_tracker_.nonzero_requests);
+      add("responses_received", response_tracker_.responses);
+      add("responses_accepted", response_tracker_.accepted);
+      add("responses_rejected", response_tracker_.rejected);
+      add("response_timeouts", response_tracker_.timeouts);
+      add("nonzero_responses_accepted", response_tracker_.nonzero_accepted);
+      add("nonzero_responses_rejected", response_tracker_.nonzero_rejected);
+      add("nonzero_response_timeouts", response_tracker_.nonzero_timeouts);
+      add("responses_pending", response_tracker_.pending());
+      add("last_request_id", last_request_id_);
+      add("last_response_id", response_tracker_.last_response_id);
+      add("last_response_code", response_tracker_.last_response_code);
+      add("last_rejection_id", response_tracker_.last_rejection_id);
+      add("last_rejection_code", response_tracker_.last_rejection_code);
+      add("last_response_latency_ms", last_response_latency_ms_);
+      add("last_timeout_id", response_tracker_.last_timeout_id);
+      array.status.push_back(std::move(command_status));
+    }
     diagnostics_pub_->publish(array);
   }
 
   std::string low_state_topic_;
   std::string command_request_topic_;
+  std::string command_response_topic_;
+  MotionResponseTracker response_tracker_{5.0};
+  uint64_t cmd_received_count_{0}, cmd_nonzero_count_{0}, cmd_rejected_count_{0};
+  uint64_t cmd_watchdog_count_{0}, low_state_watchdog_count_{0};
+  int64_t last_request_id_{0};
+  double last_response_latency_ms_{0.0};
   std::string cmd_vel_topic_;
   std::string joint_state_topic_;
   std::string imu_topic_;
@@ -341,6 +454,7 @@ class G1Bridge final : public rclcpp::Node {
   SteadyTime last_telemetry_pub_time_{};
 
   rclcpp::Publisher<unitree_api::msg::Request>::SharedPtr command_pub_;
+  rclcpp::Subscription<unitree_api::msg::Response>::SharedPtr command_response_sub_;
   rclcpp::Publisher<sensor_msgs::msg::JointState>::SharedPtr joint_pub_;
   rclcpp::Publisher<sensor_msgs::msg::Imu>::SharedPtr imu_pub_;
   rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr enabled_pub_;
