@@ -71,7 +71,10 @@ class G1Bridge final : public rclcpp::Node {
     cmd_timeout_s_ = declare_parameter<double>("cmd_timeout_s", 0.25);
     command_rate_hz_ = declare_parameter<double>("command_publish_rate_hz", 20.0);
     telemetry_rate_hz_ = declare_parameter<double>("telemetry_publish_rate_hz", 50.0);
-    command_duration_s_ = declare_parameter<double>("command_duration_s", 0.2);
+    // Unitree's bounded LocoClient::Move() uses a 1 s SetVelocity duration.
+    // A shorter upstream timeout is enforced separately and sends an explicit
+    // zero command, so this value is not used as the ROS-side watchdog.
+    command_duration_s_ = declare_parameter<double>("command_duration_s", 1.0);
     max_linear_x_ = declare_parameter<double>("max_linear_x", 0.05);
     max_linear_y_ = declare_parameter<double>("max_linear_y", 0.0);
     max_angular_z_ = declare_parameter<double>("max_angular_z", 0.15);
@@ -440,7 +443,7 @@ class G1Bridge final : public rclcpp::Node {
   double cmd_timeout_s_{0.25};
   double command_rate_hz_{20.0};
   double telemetry_rate_hz_{50.0};
-  double command_duration_s_{0.2};
+  double command_duration_s_{1.0};
   double max_linear_x_{0.05};
   double max_linear_y_{0.0};
   double max_angular_z_{0.15};

@@ -22,7 +22,10 @@ g1_bridge:
     cmd_timeout_s: 0.25
     command_publish_rate_hz: 20.0
     telemetry_publish_rate_hz: 50.0
-    command_duration_s: 0.2
+    # Match Unitree LocoClient::Move(), whose bounded SetVelocity request uses
+    # a 1 s duration. The 0.25 s ROS command watchdog still sends an explicit
+    # zero request when upstream commands stop.
+    command_duration_s: 1.0
 
     # Conservative first-hardware-test limits. Raise only with explicit launch
     # arguments after the 0.05 m/s gantry test and watchdog test have passed.

@@ -400,8 +400,11 @@ has been confirmed, the fixed `--twenty-cm` profile sends **0.05 m/s for 4 secon
 then zero for 0.5 seconds and requests disarming. The default remains 0.5 seconds.
 This is a **timed** probe: 20 cm is nominal (`speed * time`), not a measured
 distance or guaranteed minimum. It does not extend motion to compensate for
-slippage, slow acceleration, or obstacles. No speed limits, command durations
-on the native API, native modes, or watchdog thresholds are changed.
+slippage, slow acceleration, or obstacles. The bridge uses the official
+`LocoClient::Move()` bounded-command duration of 1 second; it refreshes that
+command while ROS input is current. The independent 0.25-second ROS command
+watchdog sends an explicit zero request when input stops. No native mode/FSM
+switch is performed.
 
 Keep the feet supporting the robot, the gantry as a safety restraint, the path
 and fall radius clear, Regular Mode selected, and the official controller in
