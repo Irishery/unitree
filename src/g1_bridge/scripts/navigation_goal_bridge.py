@@ -6,10 +6,13 @@ import math
 import rclpy
 from action_msgs.msg import GoalStatus
 from geometry_msgs.msg import PoseStamped
-from nav2_msgs.action import ComputePathToPose, FollowPath
-from rclpy.action import ActionClient
+from nav2_msgs.action import ComputePathToPose, FollowPath, NavigateToPose
+from rclpy.action import ActionClient, ActionServer, CancelResponse, GoalResponse
+from rclpy.callback_groups import ReentrantCallbackGroup
+from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
+from rclpy.task import Future
 from std_msgs.msg import Bool, String
 from std_srvs.srv import SetBool, Trigger
 
@@ -62,8 +65,19 @@ class NavigationGoalBridge(Node):
         ):
             raise ValueError("invalid trial path length bounds")
 
-        self._planner = ActionClient(self, ComputePathToPose, "/compute_path_to_pose")
-        self._controller = ActionClient(self, FollowPath, "/follow_path")
+        self._action_callback_group = ReentrantCallbackGroup()
+        self._planner = ActionClient(
+            self,
+            ComputePathToPose,
+            "/compute_path_to_pose",
+            callback_group=self._action_callback_group,
+        )
+        self._controller = ActionClient(
+            self,
+            FollowPath,
+            "/follow_path",
+            callback_group=self._action_callback_group,
+        )
         state_qos = QoSProfile(
             depth=1,
             reliability=ReliabilityPolicy.RELIABLE,
@@ -81,11 +95,26 @@ class NavigationGoalBridge(Node):
         self._cancel_service = self.create_service(
             Trigger, "/g1/cancel_navigation", self._on_cancel
         )
-        self._disarm_client = self.create_client(SetBool, "/g1/enable_control")
+        self._disarm_client = self.create_client(
+            SetBool, "/g1/enable_control", callback_group=self._action_callback_group
+        )
+        self._navigate_action = ActionServer(
+            self,
+            NavigateToPose,
+            "/navigate_to_pose",
+            execute_callback=self._execute_navigation,
+            goal_callback=self._on_action_goal,
+            cancel_callback=self._on_action_cancel,
+            callback_group=self._action_callback_group,
+        )
         self._control_enabled = False
         self._request_pending = False
         self._follow_goal_handle = None
         self._generation = 0
+        self._action_reserved = False
+        self._action_goal_handle = None
+        self._action_completion = None
+        self._action_cancel_pending = False
         self._publish_state("DISARMED")
         length_text = (
             f">= {self._min_path_length:.2f} m"
@@ -94,7 +123,7 @@ class NavigationGoalBridge(Node):
         )
         self.get_logger().warning(
             f"Navigation ready: arm explicitly, then send a nearly straight "
-            f"{length_text} /goal_pose"
+            f"{length_text} /navigate_to_pose action goal"
         )
 
     def _publish_state(self, state):
@@ -102,6 +131,22 @@ class NavigationGoalBridge(Node):
         message.data = state
         self._state_publisher.publish(message)
         self.get_logger().info(f"Navigation state: {state}")
+        if self._action_completion is not None and not self._action_completion.done():
+            outcome = None
+            if state.startswith("SUCCEEDED"):
+                outcome = "succeeded"
+            elif state.startswith("CANCELED") or state == "CANCEL_REQUESTED":
+                outcome = "canceled"
+            elif (
+                state == "DISARMED"
+                or state.startswith("PLAN_")
+                or state.startswith("FOLLOW_FAILED")
+                or state.startswith("FOLLOW_REJECTED")
+                or state.startswith("DISARMED_BEFORE_FOLLOW")
+            ):
+                outcome = "aborted"
+            if outcome is not None:
+                self._action_completion.set_result(outcome)
 
     def _on_control(self, message):
         enabled = bool(message.data)
@@ -111,32 +156,44 @@ class NavigationGoalBridge(Node):
         if enabled and not self._request_pending and self._follow_goal_handle is None:
             self._publish_state("ARMED_WAITING_FOR_GOAL")
 
+    @staticmethod
+    def _pose_is_finite(pose):
+        return all(
+            math.isfinite(value)
+            for value in (
+                pose.pose.position.x,
+                pose.pose.position.y,
+                pose.pose.orientation.x,
+                pose.pose.orientation.y,
+                pose.pose.orientation.z,
+                pose.pose.orientation.w,
+            )
+        )
+
     def _on_goal(self, pose):
+        self._start_goal(pose, action_owned=False)
+
+    def _start_goal(self, pose, action_owned):
         if not self._control_enabled:
             self._publish_state("REJECTED_DISARMED")
-            return
-        if self._request_pending or self._follow_goal_handle is not None:
+            return False
+        if self._request_pending or self._follow_goal_handle is not None or (
+            not action_owned
+            and (self._action_reserved or self._action_goal_handle is not None)
+        ):
             self._publish_state("REJECTED_BUSY")
-            return
+            return False
         if not pose.header.frame_id:
             self._publish_state("REJECTED_EMPTY_FRAME")
-            return
-        pose_values = (
-            pose.pose.position.x,
-            pose.pose.position.y,
-            pose.pose.orientation.x,
-            pose.pose.orientation.y,
-            pose.pose.orientation.z,
-            pose.pose.orientation.w,
-        )
-        if not all(math.isfinite(value) for value in pose_values):
+            return False
+        if not self._pose_is_finite(pose):
             self._publish_state("REJECTED_NONFINITE_GOAL")
             self._request_disarm()
-            return
+            return False
         if not self._planner.server_is_ready() or not self._controller.server_is_ready():
             self._publish_state("REJECTED_NAV2_NOT_READY")
             self._request_disarm()
-            return
+            return False
 
         request = ComputePathToPose.Goal()
         request.goal = pose
@@ -149,9 +206,73 @@ class NavigationGoalBridge(Node):
         self._planner.send_goal_async(request).add_done_callback(
             lambda future: self._plan_response(future, generation)
         )
+        return True
+
+    def _on_action_goal(self, request):
+        if not self._control_enabled:
+            self._publish_state("REJECTED_DISARMED")
+            return GoalResponse.REJECT
+        if (
+            self._request_pending
+            or self._follow_goal_handle is not None
+            or self._action_reserved
+            or self._action_goal_handle is not None
+        ):
+            self._publish_state("REJECTED_BUSY")
+            return GoalResponse.REJECT
+        if not request.pose.header.frame_id or not self._pose_is_finite(request.pose):
+            self._publish_state("REJECTED_INVALID_ACTION_GOAL")
+            self._request_disarm()
+            return GoalResponse.REJECT
+        if not self._planner.server_is_ready() or not self._controller.server_is_ready():
+            self._publish_state("REJECTED_NAV2_NOT_READY")
+            self._request_disarm()
+            return GoalResponse.REJECT
+        self._action_reserved = True
+        self._action_cancel_pending = False
+        return GoalResponse.ACCEPT
+
+    async def _execute_navigation(self, goal_handle):
+        self._action_reserved = False
+        self._action_goal_handle = goal_handle
+        self._action_completion = Future()
+        if self._action_cancel_pending or goal_handle.is_cancel_requested:
+            self._action_completion.set_result("canceled")
+        else:
+            started = self._start_goal(goal_handle.request.pose, action_owned=True)
+            if not started and not self._action_completion.done():
+                self._action_completion.set_result("aborted")
+
+        outcome = await self._action_completion
+        result = NavigateToPose.Result()
+        if outcome == "succeeded":
+            goal_handle.succeed()
+            if hasattr(result, "error_code"):
+                result.error_code = 0
+        elif outcome == "canceled":
+            goal_handle.canceled()
+        else:
+            goal_handle.abort()
+
+        self._action_goal_handle = None
+        self._action_completion = None
+        self._action_cancel_pending = False
+        return result
+
+    def _on_action_cancel(self, _goal_handle):
+        self._action_cancel_pending = True
+        self._cancel_active("CANCELED_DISARMING")
+        self._request_disarm()
+        return CancelResponse.ACCEPT
 
     def _plan_response(self, future, generation):
         if generation != self._generation:
+            try:
+                stale_handle = future.result()
+                if stale_handle is not None and stale_handle.accepted:
+                    stale_handle.cancel_goal_async()
+            except Exception:
+                pass
             return
         try:
             goal_handle = future.result()
@@ -227,6 +348,12 @@ class NavigationGoalBridge(Node):
 
     def _follow_response(self, future, generation):
         if generation != self._generation:
+            try:
+                stale_handle = future.result()
+                if stale_handle is not None and stale_handle.accepted:
+                    stale_handle.cancel_goal_async()
+            except Exception:
+                pass
             return
         self._request_pending = False
         try:
@@ -305,9 +432,12 @@ def main():
     node = NavigationGoalBridge()
     try:
         rclpy.spin(node)
+    except (KeyboardInterrupt, ExternalShutdownException):
+        pass
     finally:
         node.destroy_node()
-        rclpy.shutdown()
+        if rclpy.ok():
+            rclpy.shutdown()
 
 
 if __name__ == "__main__":

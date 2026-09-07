@@ -1,6 +1,8 @@
 Panels:
   - Class: rviz_common/Displays
     Name: Displays
+  - Class: nav2_rviz_plugins/Navigation 2
+    Name: Navigation 2
 Visualization Manager:
   Class: ""
   Displays:
@@ -108,7 +110,7 @@ Visualization Manager:
       Length: 0.3
       Line Style: Lines
       Line Width: 0.04
-      Name: Planned path (no motion)
+      Name: Nav2 planned path
       Pose Color: 0; 255; 0
       Pose Style: None
       Radius: 0.03
@@ -133,8 +135,7 @@ Visualization Manager:
     - Class: rviz_default_plugins/FocusCamera
     - Class: rviz_default_plugins/Measure
       Line color: 128; 128; 0
-    - Class: rviz_default_plugins/SetGoal
-      Topic: /goal_pose
+    - Class: nav2_rviz_plugins/GoalTool
   Views:
     Current:
       Class: rviz_default_plugins/Orbit

@@ -341,12 +341,14 @@ ros2 topic echo /g1/control_enabled --once
 ros2 topic echo /g1/navigation_state --once
 ```
 
-The expected states are `data: true` and
-`ARMED_WAITING_FOR_GOAL`. In laptop RViz use **2D Goal Pose**, not the
-Navigation2 action panel. The orientation arrow must point forward. A sharply
-curved, sideways or rear path is rejected and disarmed without sending walking
-commands. There is no upper path-length limit; select a distance suitable for
-the currently cleared and supervised test area.
+The expected states are `data: true` and `ARMED_WAITING_FOR_GOAL`. In laptop
+RViz use **Navigation2 Goal** to start an action-backed goal; its **Cancel**
+button cancels the internal `FollowPath` action and requests software disarm.
+The older **2D Goal Pose** topic tool remains supported, but it has no built-in
+RViz cancel button. The orientation arrow must point forward. A sharply curved,
+sideways or rear path is rejected and disarmed without sending walking commands.
+There is no upper path-length limit; select a distance suitable for the currently
+cleared and supervised test area.
 
 Watch the state without printing the large sensor topics:
 
@@ -361,7 +363,8 @@ The normal sequence is `PLANNING`, `FOLLOW_REQUEST...`, `FOLLOWING`,
 ros2 topic echo /g1/control_enabled --once
 ```
 
-It must be `false`. At any time, first use the physical controller; the
+It must be `false`. The RViz **Cancel** button is a normal navigation cancel,
+not an emergency stop. At any time, first use the physical controller; the
 additional ROS cancellation path is:
 
 ```bash
@@ -384,8 +387,10 @@ cd /home/kir/unitree
 ./scripts/hardware_rviz_build.sh
 ```
 
-The viewer uses host networking solely to receive DDS topics from the robot;
-it does not start MuJoCo, SLAM, Nav2, or any motion publisher.
+The viewer does not start MuJoCo, SLAM, Nav2, or any motor/velocity publisher.
+It does use host networking in both directions: the Navigation 2 panel can send
+a guarded goal or cancel request to the robot-side action server. The robot-side
+software-control gate must still be armed explicitly before a goal is accepted.
 
 Keep `hardware_telemetry.launch.py` and `mid360.launch.py` running on the robot.
 On the laptop graphical desktop, connected to the same DDS-capable network,

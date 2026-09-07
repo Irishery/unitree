@@ -58,6 +58,11 @@ forward-only guard to `/g1/motion_cmd_vel`, accepts nearly straight paths of
 at least 0.10 m, and still starts `/g1/control_enabled=false`. It does not
 publish `/lowcmd` or `/user_lowcmd`.
 
+It also exposes the standard Nav2 `/navigate_to_pose` action for the RViz
+Navigation 2 panel. Canceling that action cancels the guarded `FollowPath` and
+requests `/g1/enable_control=false`. `/g1/cancel_navigation` remains the
+independent service-based cancellation path.
+
 ## Simulation navigation
 
 These interfaces belong to the Gazebo and MuJoCo simulation stands, not to the

@@ -78,7 +78,9 @@ def _launch_navigation_trial(context):
         Node(
             package="nav2_lifecycle_manager",
             executable="lifecycle_manager",
-            name="lifecycle_manager_navigation_trial",
+            # Keep Nav2's conventional name: the RViz Navigation 2 panel
+            # queries /lifecycle_manager_navigation/is_active.
+            name="lifecycle_manager_navigation",
             output="screen",
             parameters=[
                 {

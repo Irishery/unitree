@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Display the physical G1 Mid-360 cloud on the laptop.
-# This container has host networking for DDS discovery only. It does not send
-# motion commands and does not contain or launch the simulation stack.
+# This container has host networking for DDS. It never publishes motor or
+# velocity commands, but its Navigation 2 panel can send a guarded navigation
+# goal/cancel action when the robot-side stack has been explicitly armed.
 
 set -euo pipefail
 

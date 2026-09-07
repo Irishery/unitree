@@ -8,7 +8,8 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
        -o Acquire::http::Timeout=30 update \
     && apt-get -o Acquire::ForceIPv4=true -o Acquire::Retries=5 \
        -o Acquire::http::Timeout=30 install -y --no-install-recommends \
-       ros-humble-rmw-cyclonedds-cpp
+       ros-humble-rmw-cyclonedds-cpp \
+       ros-humble-nav2-rviz-plugins
 
 ENV ROS_DISTRO=humble
 ENV RMW_IMPLEMENTATION=rmw_cyclonedds_cpp

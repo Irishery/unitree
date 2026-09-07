@@ -24,6 +24,9 @@
     It accepts nearly straight paths of at least 0.10 m, rejects reverse,
     sideways and in-place rotation commands, and automatically requests
     software disarm when following ends or fails.
+12. RViz **Cancel** is a normal action cancellation routed through the software
+    watchdog and disarm service. It does not replace the official controller
+    as the physical emergency stop.
 
 Never test walking for the first time in low-level/debug motor-control mode. Firmware and remote-controller key combinations differ between G1 releases; use the instructions shipped with the robot to select normal locomotion mode.
 

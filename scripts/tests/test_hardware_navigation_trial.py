@@ -49,8 +49,11 @@ def load_goal_bridge():
         for name in (
             "rclpy",
             "rclpy.action",
+            "rclpy.callback_groups",
+            "rclpy.executors",
             "rclpy.node",
             "rclpy.qos",
+            "rclpy.task",
             "action_msgs",
             "action_msgs.msg",
             "geometry_msgs",
@@ -64,6 +67,12 @@ def load_goal_bridge():
         )
     }
     modules["rclpy.action"].ActionClient = MagicMock
+    modules["rclpy.action"].ActionServer = MagicMock
+    modules["rclpy.action"].CancelResponse = types.SimpleNamespace(ACCEPT=1, REJECT=2)
+    modules["rclpy.action"].GoalResponse = types.SimpleNamespace(ACCEPT=1, REJECT=2)
+    modules["rclpy.callback_groups"].ReentrantCallbackGroup = MagicMock
+    modules["rclpy.executors"].ExternalShutdownException = RuntimeError
+    modules["rclpy.task"].Future = MagicMock
     modules["rclpy.node"].Node = object
     for name in ("DurabilityPolicy", "QoSProfile", "ReliabilityPolicy"):
         setattr(modules["rclpy.qos"], name, MagicMock())
@@ -73,6 +82,7 @@ def load_goal_bridge():
     modules["geometry_msgs.msg"].PoseStamped = MagicMock
     modules["nav2_msgs.action"].ComputePathToPose = MagicMock
     modules["nav2_msgs.action"].FollowPath = MagicMock
+    modules["nav2_msgs.action"].NavigateToPose = MagicMock
     modules["std_msgs.msg"].Bool = MagicMock
     modules["std_msgs.msg"].String = MagicMock
     modules["std_srvs.srv"].SetBool = types.SimpleNamespace(Request=MagicMock)
@@ -170,6 +180,69 @@ class PathPolicyTests(unittest.TestCase):
         )
         self.assertGreater(length, 0.3)
         self.assertLess(turn, 0.02)
+
+
+class NavigateActionTests(unittest.TestCase):
+    def make_node(self):
+        node = goal_bridge.NavigationGoalBridge.__new__(goal_bridge.NavigationGoalBridge)
+        node._control_enabled = True
+        node._request_pending = False
+        node._follow_goal_handle = None
+        node._action_reserved = False
+        node._action_goal_handle = None
+        node._action_cancel_pending = False
+        node._planner = MagicMock()
+        node._controller = MagicMock()
+        node._planner.server_is_ready.return_value = True
+        node._controller.server_is_ready.return_value = True
+        node._publish_state = MagicMock()
+        node._request_disarm = MagicMock()
+        return node
+
+    def test_rviz_action_goal_is_accepted_only_when_armed_and_ready(self):
+        node = self.make_node()
+        request = types.SimpleNamespace(pose=MagicMock())
+        request.pose.header.frame_id = "map"
+        for value in (
+            request.pose.pose.position.x,
+            request.pose.pose.position.y,
+            request.pose.pose.orientation.x,
+            request.pose.pose.orientation.y,
+            request.pose.pose.orientation.z,
+            request.pose.pose.orientation.w,
+        ):
+            value.__float__.return_value = 0.0
+        with patch.object(node, "_pose_is_finite", return_value=True):
+            result = node._on_action_goal(request)
+        self.assertEqual(result, goal_bridge.GoalResponse.ACCEPT)
+        self.assertTrue(node._action_reserved)
+
+    def test_rviz_cancel_requests_follow_cancel_and_disarm(self):
+        node = self.make_node()
+        node._cancel_active = MagicMock()
+        result = node._on_action_cancel(MagicMock())
+        self.assertEqual(result, goal_bridge.CancelResponse.ACCEPT)
+        self.assertTrue(node._action_cancel_pending)
+        node._cancel_active.assert_called_once_with("CANCELED_DISARMING")
+        node._request_disarm.assert_called_once()
+
+    def test_terminal_state_completes_rviz_action(self):
+        node = self.make_node()
+        node._state_publisher = MagicMock()
+        node.get_logger = MagicMock()
+        node._action_completion = MagicMock()
+        node._action_completion.done.return_value = False
+        goal_bridge.NavigationGoalBridge._publish_state(node, "SUCCEEDED_DISARMING")
+        node._action_completion.set_result.assert_called_once_with("succeeded")
+
+    def test_rejected_second_goal_does_not_abort_active_action(self):
+        node = self.make_node()
+        node._state_publisher = MagicMock()
+        node.get_logger = MagicMock()
+        node._action_completion = MagicMock()
+        node._action_completion.done.return_value = False
+        goal_bridge.NavigationGoalBridge._publish_state(node, "REJECTED_BUSY")
+        node._action_completion.set_result.assert_not_called()
 
 
 if __name__ == "__main__":
