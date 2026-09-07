@@ -20,6 +20,10 @@
 9. Verify that disabling the service stops commands before trying higher limits.
 10. Keep Nav2 planning disconnected from `/g1/motion_cmd_vel` until the global
     path, bounded walking probe, watchdog stop, and manual disarm have each passed.
+11. The first physical Nav2 run must use `hardware_navigation_trial.launch.py`.
+    It accepts only a 0.10--0.35 m nearly straight path, rejects reverse,
+    sideways and in-place rotation commands, and automatically requests
+    software disarm when following ends or fails.
 
 Never test walking for the first time in low-level/debug motor-control mode. Firmware and remote-controller key combinations differ between G1 releases; use the instructions shipped with the robot to select normal locomotion mode.
 

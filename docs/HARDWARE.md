@@ -262,6 +262,116 @@ coordinates without printing the entire path:
 Do not proceed if the path crosses the table, unknown map space, or comes
 closer to an obstacle than the configured 0.45 m robot radius plus inflation.
 
+## First bounded Nav2-to-legs trial
+
+This stage is available only after all of the following have passed on the
+physical robot: mapping while walking from the official controller, a correct
+global path, the `0.20 m/s` bridge probe, zero-command stop, and confirmed
+`/g1/control_enabled=false` after disarming.
+
+The trial is intentionally not the full autonomous-navigation stack. It uses
+Nav2 `planner_server` and Regulated Pure Pursuit `controller_server`, but no BT
+recoveries, backing up, spinning, or waypoint follower. A separate guard:
+
+- accepts only forward motion and outputs the verified `0.20 m/s` gait speed;
+- clamps forward yaw to `0.10 rad/s`;
+- removes lateral velocity;
+- rejects reverse and rotation-in-place commands;
+- sends zero if the Nav2 command is stale for more than 0.20 second;
+- accepts only paths 0.10--0.35 m long with at most 0.35 rad accumulated turn;
+- requests software disarm after success, cancellation, or failure.
+
+Keep the robot on its feet with the gantry loose enough to walk, clear the fall
+radius and the 0.5 m path ahead, select Regular Mode, and hold the official
+controller. Keep the Mid-360 driver and `hardware_mapping_safe.sh` running.
+Stop `hardware_planning.launch.py`, `hardware_telemetry.launch.py`, and any old
+`hardware_motion.launch.py`; the trial launch supplies their required motion,
+odometry, TF, and robot-state bridge nodes itself.
+
+After installing `ros-humble-navigation2`, transfer/rebuild the current project
+on the robot:
+
+```bash
+cd ~/unitree
+set +u
+source /opt/ros/humble/setup.bash
+source /home/unitree/unitree_ros2/install/setup.bash
+./scripts/build.sh
+```
+
+Start the bounded stack in a new robot terminal. The three acknowledgements are
+required, but the bridge still starts disarmed:
+
+```bash
+cd ~/unitree
+unset G1_HARDWARE_PEERS
+source scripts/hardware_env.sh enP8p1s0
+ros2 launch g1_bridge hardware_navigation_trial.launch.py \
+  motion_interface:=true \
+  allow_hardware_motion:=true \
+  allow_nav2_motion:=true
+```
+
+Before arming, verify all inputs and lifecycle states in a second robot
+terminal:
+
+```bash
+cd ~/unitree
+unset G1_HARDWARE_PEERS
+source scripts/hardware_env.sh enP8p1s0
+
+ros2 lifecycle get /planner_server
+ros2 lifecycle get /controller_server
+timeout 5 ros2 topic hz /map
+timeout 5 ros2 topic hz /scan
+timeout 5 ros2 run tf2_ros tf2_echo map base_footprint
+ros2 topic echo /g1/control_enabled --once
+ros2 topic echo /g1/navigation_state --once
+```
+
+Both lifecycle nodes must be `active`; map, scan and TF must be current;
+control must be `false`; navigation state must be `DISARMED`. Do not arm if a
+costmap marks the intended 0.5 m corridor as occupied.
+
+Arm once:
+
+```bash
+ros2 service call /g1/enable_control std_srvs/srv/SetBool '{data: true}'
+ros2 topic echo /g1/control_enabled --once
+ros2 topic echo /g1/navigation_state --once
+```
+
+The expected states are `data: true` and
+`ARMED_WAITING_FOR_SHORT_GOAL`. In laptop RViz use **2D Goal Pose**, not the
+Navigation2 action panel, and place one goal 0.20--0.30 m directly in front of
+the robot. The orientation arrow must point forward. A longer, curved, sideways
+or rear goal is rejected and disarmed without sending walking commands.
+
+Watch the state without printing the large sensor topics:
+
+```bash
+ros2 topic echo /g1/navigation_state
+```
+
+The normal sequence is `PLANNING`, `FOLLOW_REQUEST...`, `FOLLOWING`,
+`SUCCEEDED_DISARMING`, then `DISARMED`. Confirm the final gate:
+
+```bash
+ros2 topic echo /g1/control_enabled --once
+```
+
+It must be `false`. At any time, first use the physical controller; the
+additional ROS cancellation path is:
+
+```bash
+ros2 service call /g1/cancel_navigation std_srvs/srv/Trigger '{}'
+ros2 service call /g1/enable_control std_srvs/srv/SetBool '{data: false}'
+```
+
+Do not increase the distance or turn allowance after this first run. Review
+the observed stop distance, odometry tracking, local costmap, and command
+diagnostics before enabling longer paths or any obstacle-avoidance trial.
+
 ### RViz on the Ubuntu 24.04 laptop
 
 The laptop has Ubuntu 24.04 without a native ROS installation. Build the

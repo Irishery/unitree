@@ -89,6 +89,8 @@ install(TARGETS
   DESTINATION lib/${PROJECT_NAME}
 )
 install(PROGRAMS
+  scripts/navigation_goal_bridge.py
+  scripts/nav_velocity_guard.py
   scripts/planner_goal_bridge.py
   DESTINATION lib/${PROJECT_NAME}
 )
