@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Plan and follow a short RViz goal using the guarded physical-G1 Nav2 stack."""
+"""Plan and follow an RViz goal using the guarded physical-G1 Nav2 stack."""
 
 import math
 
@@ -49,14 +49,17 @@ class NavigationGoalBridge(Node):
     def __init__(self):
         super().__init__("g1_navigation_goal_bridge")
         self.declare_parameter("min_path_length", 0.10)
-        self.declare_parameter("max_path_length", 0.35)
+        self.declare_parameter("max_path_length", 0.0)
         self.declare_parameter("max_path_heading_change", 0.35)
         self._min_path_length = float(self.get_parameter("min_path_length").value)
         self._max_path_length = float(self.get_parameter("max_path_length").value)
         self._max_path_heading_change = float(
             self.get_parameter("max_path_heading_change").value
         )
-        if not 0.0 <= self._min_path_length < self._max_path_length:
+        if self._min_path_length < 0.0 or (
+            self._max_path_length > 0.0
+            and self._min_path_length >= self._max_path_length
+        ):
             raise ValueError("invalid trial path length bounds")
 
         self._planner = ActionClient(self, ComputePathToPose, "/compute_path_to_pose")
@@ -84,9 +87,14 @@ class NavigationGoalBridge(Node):
         self._follow_goal_handle = None
         self._generation = 0
         self._publish_state("DISARMED")
+        length_text = (
+            f">= {self._min_path_length:.2f} m"
+            if self._max_path_length <= 0.0
+            else f"{self._min_path_length:.2f}..{self._max_path_length:.2f} m"
+        )
         self.get_logger().warning(
-            f"Navigation trial ready: arm explicitly, then send a nearly straight "
-            f"{self._min_path_length:.2f}..{self._max_path_length:.2f} m /goal_pose"
+            f"Navigation ready: arm explicitly, then send a nearly straight "
+            f"{length_text} /goal_pose"
         )
 
     def _publish_state(self, state):
@@ -101,7 +109,7 @@ class NavigationGoalBridge(Node):
             self._cancel_active("DISARMED")
         self._control_enabled = enabled
         if enabled and not self._request_pending and self._follow_goal_handle is None:
-            self._publish_state("ARMED_WAITING_FOR_SHORT_GOAL")
+            self._publish_state("ARMED_WAITING_FOR_GOAL")
 
     def _on_goal(self, pose):
         if not self._control_enabled:
@@ -186,7 +194,9 @@ class NavigationGoalBridge(Node):
             self._publish_state("REJECTED_NONFINITE_PATH")
             self._request_disarm()
             return
-        if length < self._min_path_length or length > self._max_path_length:
+        if length < self._min_path_length or (
+            self._max_path_length > 0.0 and length > self._max_path_length
+        ):
             self._request_pending = False
             self._publish_state(
                 f"REJECTED_PATH_LENGTH_{length:.2f}M"

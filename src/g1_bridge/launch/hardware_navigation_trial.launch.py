@@ -1,7 +1,7 @@
 """First bounded Nav2-to-legs trial for the physical G1.
 
 Requires an already healthy /map, /scan and map->odom transform. The launch
-starts disarmed, accepts only short nearly straight paths, and never publishes
+starts disarmed, accepts only nearly straight paths, and never publishes
 low-level motor commands.
 """
 
@@ -112,7 +112,8 @@ def _launch_navigation_trial(context):
             parameters=[
                 {
                     "min_path_length": 0.10,
-                    "max_path_length": 0.35,
+                    # Zero disables the former trial-only upper distance bound.
+                    "max_path_length": 0.0,
                     "max_path_heading_change": 0.35,
                 }
             ],

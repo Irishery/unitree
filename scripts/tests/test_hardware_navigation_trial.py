@@ -154,6 +154,11 @@ class PathPolicyTests(unittest.TestCase):
         length, turn = goal_bridge.path_metrics(make_path([(0, 0), (math.nan, 0)]))
         self.assertFalse(math.isfinite(length) and math.isfinite(turn))
 
+    def test_long_straight_path_remains_straight(self):
+        length, turn = goal_bridge.path_metrics(make_path([(0, 0), (0.5, 0), (2.0, 0)]))
+        self.assertAlmostEqual(length, 2.0)
+        self.assertAlmostEqual(turn, 0.0)
+
     def test_corner_accumulates_heading_change(self):
         length, turn = goal_bridge.path_metrics(make_path([(0, 0), (0.2, 0), (0.2, 0.2)]))
         self.assertAlmostEqual(length, 0.4)

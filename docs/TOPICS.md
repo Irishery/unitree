@@ -54,8 +54,8 @@ does not expose `/g1/enable_control`, and has no Unitree command publisher.
 
 `hardware_navigation_trial.launch.py` is the first deliberately limited
 physical Nav2 controller stage. It routes `/g1/nav_cmd_vel_raw` through a
-forward-only guard to `/g1/motion_cmd_vel`, accepts only 0.10--0.35 m nearly
-straight paths, and still starts `/g1/control_enabled=false`. It does not
+forward-only guard to `/g1/motion_cmd_vel`, accepts nearly straight paths of
+at least 0.10 m, and still starts `/g1/control_enabled=false`. It does not
 publish `/lowcmd` or `/user_lowcmd`.
 
 ## Simulation navigation

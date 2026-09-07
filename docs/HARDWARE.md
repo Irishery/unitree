@@ -278,7 +278,7 @@ recoveries, backing up, spinning, or waypoint follower. A separate guard:
 - removes lateral velocity;
 - rejects reverse and rotation-in-place commands;
 - sends zero if the Nav2 command is stale for more than 0.20 second;
-- accepts only paths 0.10--0.35 m long with at most 0.35 rad accumulated turn;
+- rejects paths shorter than 0.10 m or with over 0.35 rad accumulated turn;
 - requests software disarm after success, cancellation, or failure.
 
 Keep the robot on its feet with the gantry loose enough to walk, clear the fall
@@ -342,10 +342,11 @@ ros2 topic echo /g1/navigation_state --once
 ```
 
 The expected states are `data: true` and
-`ARMED_WAITING_FOR_SHORT_GOAL`. In laptop RViz use **2D Goal Pose**, not the
-Navigation2 action panel, and place one goal 0.20--0.30 m directly in front of
-the robot. The orientation arrow must point forward. A longer, curved, sideways
-or rear goal is rejected and disarmed without sending walking commands.
+`ARMED_WAITING_FOR_GOAL`. In laptop RViz use **2D Goal Pose**, not the
+Navigation2 action panel. The orientation arrow must point forward. A sharply
+curved, sideways or rear path is rejected and disarmed without sending walking
+commands. There is no upper path-length limit; select a distance suitable for
+the currently cleared and supervised test area.
 
 Watch the state without printing the large sensor topics:
 

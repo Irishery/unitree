@@ -21,7 +21,7 @@
 10. Keep Nav2 planning disconnected from `/g1/motion_cmd_vel` until the global
     path, bounded walking probe, watchdog stop, and manual disarm have each passed.
 11. The first physical Nav2 run must use `hardware_navigation_trial.launch.py`.
-    It accepts only a 0.10--0.35 m nearly straight path, rejects reverse,
+    It accepts nearly straight paths of at least 0.10 m, rejects reverse,
     sideways and in-place rotation commands, and automatically requests
     software disarm when following ends or fails.
 
