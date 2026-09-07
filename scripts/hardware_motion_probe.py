@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Fixed, bounded first high-level walking probe for a supported physical G1."""
+"""Fixed, bounded walking probes; --twenty-cm is timed, not odometry controlled."""
 
 import os
 import signal
@@ -26,6 +26,7 @@ from std_srvs.srv import SetBool
 TOPIC = "/g1/motion_cmd_vel"
 SPEED_MPS = 0.05
 MOVE_SECONDS = 0.5
+TWENTY_CM_SECONDS = 0.20 / SPEED_MPS
 RATE_HZ = 20.0
 
 
@@ -101,11 +102,12 @@ def interrupt_probe(_signum, _frame):
 
 
 def main():
-    if len(sys.argv) != 1:
-        print("This first probe takes no motion arguments.", file=sys.stderr)
+    if sys.argv[1:] not in ([], ["--twenty-cm"]):
+        print("Usage: hardware_motion_probe.py [--twenty-cm]", file=sys.stderr)
         return 2
+    move_seconds = TWENTY_CM_SECONDS if sys.argv[1:] else MOVE_SECONDS
 
-    rclpy.init(signal_handler_options=SignalHandlerOptions.NO)
+    rclpy.init(args=[], signal_handler_options=SignalHandlerOptions.NO)
     previous_signals = {
         sig: signal.signal(sig, interrupt_probe) for sig in (signal.SIGINT, signal.SIGTERM)
     }
@@ -123,7 +125,9 @@ def main():
         if node.count_subscribers(TOPIC) < 1:
             raise RuntimeError(f"Refusing to move: no bridge subscriber on {TOPIC}")
 
-        print("Bounded probe: +0.05 m/s for 0.5 s, then stop and disarm.")
+        print(f"Bounded probe: +{SPEED_MPS:.2f} m/s for {move_seconds:g} s, then stop and disarm.")
+        if sys.argv[1:]:
+            print("Nominal distance 20 cm; actual distance is not measured or guaranteed.")
         print("Starting in 3 seconds; Ctrl-C aborts.")
         for remaining in (3, 2, 1):
             print(remaining, flush=True)
@@ -132,7 +136,7 @@ def main():
                 rclpy.spin_once(node, timeout_sec=0.1)
                 if node.control_enabled is not True:
                     raise RuntimeError("Software control was disabled during countdown")
-        node.publish_for(SPEED_MPS, MOVE_SECONDS)
+        node.publish_for(SPEED_MPS, move_seconds)
         print("Bounded velocity publication completed; robot movement is not verified.")
     except KeyboardInterrupt:
         print("Interrupted; sending stop.")

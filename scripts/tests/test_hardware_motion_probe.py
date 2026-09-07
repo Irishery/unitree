@@ -91,7 +91,7 @@ class CleanupTests(unittest.TestCase):
 
 
 class ExitStatusTests(unittest.TestCase):
-    def run_main(self, disarm_success, publish_error=None):
+    def run_main(self, disarm_success, publish_error=None, args=None):
         node = MagicMock()
         node.control_enabled = True
         node.count_subscribers.return_value = 1
@@ -100,11 +100,13 @@ class ExitStatusTests(unittest.TestCase):
         with patch.object(probe, "MotionProbe", return_value=node), \
                 patch.object(probe, "rclpy", MagicMock()), \
                 patch.object(probe.signal, "signal"), \
-                patch.object(probe.sys, "argv", ["hardware_motion_probe.py"]), \
+                patch.object(probe.sys, "argv", ["hardware_motion_probe.py"] + (args or [])), \
                 patch.object(probe.time, "monotonic", side_effect=itertools.count(0, .5)):
             code = probe.main()
         node.stop_and_disarm.assert_called_once()
         node.destroy_node.assert_called_once()
+        expected_duration = 4.0 if args else 0.5
+        node.publish_for.assert_called_once_with(0.05, expected_duration)
         return code
 
     def test_unconfirmed_disarm_is_failure(self):
@@ -115,6 +117,20 @@ class ExitStatusTests(unittest.TestCase):
 
     def test_interrupt_still_disarms(self):
         self.assertEqual(self.run_main(True, KeyboardInterrupt()), 130)
+
+    def test_twenty_cm_keeps_speed_and_bounds_duration(self):
+        self.assertEqual(self.run_main(True, args=["--twenty-cm"]), 0)
+
+    def test_twenty_cm_interrupt_still_disarms(self):
+        self.assertEqual(self.run_main(True, KeyboardInterrupt(), ["--twenty-cm"]), 130)
+
+    def test_invalid_options_never_initialize_ros(self):
+        for args in (["--twenty-cm", "--twenty-cm"], ["--speed", "1"], ["--duration", "40"]):
+            with self.subTest(args=args), \
+                    patch.object(probe.sys, "argv", ["probe"] + args), \
+                    patch.object(probe, "rclpy", MagicMock()) as ros:
+                self.assertEqual(probe.main(), 2)
+                ros.init.assert_not_called()
 
 
 if __name__ == "__main__":

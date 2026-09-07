@@ -377,8 +377,8 @@ ros2 service call /g1/enable_control std_srvs/srv/SetBool '{data: true}'
 ros2 topic echo /g1/control_enabled --once
 ```
 
-The second command must show `data: true`. Run the fixed probe; it accepts no
-speed or duration arguments, sends only +0.05 m/s for 0.5 seconds, then sends
+The second command must show `data: true`. Run the default fixed probe; it accepts no
+arbitrary speed or duration arguments, sends only +0.05 m/s for 0.5 seconds, then sends
 zero for 0.5 seconds and disables `/g1/enable_control`:
 
 ```bash
@@ -392,6 +392,39 @@ the only motion stage added here: the Nav2 path is **not yet connected** to the
 legs. Connecting a controller to `/g1/motion_cmd_vel` is permitted only after
 the path clearance, bounded motion, watchdog stop, and manual disarm tests all
 pass on the exact robot.
+
+### Follow-up: nominal 20 cm walking probe
+
+Only after the short probe has visibly moved the robot and software disarming
+has been confirmed, the fixed `--twenty-cm` profile sends **0.05 m/s for 4 seconds**,
+then zero for 0.5 seconds and requests disarming. The default remains 0.5 seconds.
+This is a **timed** probe: 20 cm is nominal (`speed * time`), not a measured
+distance or guaranteed minimum. It does not extend motion to compensate for
+slippage, slow acceleration, or obstacles. No speed limits, command durations
+on the native API, native modes, or watchdog thresholds are changed.
+
+Keep the feet supporting the robot, the gantry as a safety restraint, the path
+and fall radius clear, Regular Mode selected, and the official controller in
+hand. This probe has no obstacle avoidance. With the updated motion bridge
+already running, use a second **robot** terminal:
+
+```bash
+cd ~/unitree
+unset G1_HARDWARE_PEERS
+source scripts/hardware_env.sh enP8p1s0
+ros2 service call /g1/enable_control std_srvs/srv/SetBool '{data: true}'
+# Continue only on service success and data: true:
+ros2 topic echo /g1/control_enabled --once
+set -o pipefail
+G1_ALLOW_MOTION_TEST=YES ./scripts/hardware_motion_probe.py --twenty-cm \
+  2>&1 | tee ~/g1_motion_20cm.log
+echo "probe_exit_code=${PIPESTATUS[0]}"
+ros2 topic echo /g1/control_enabled --once
+```
+
+The final state must be false. Ctrl-C attempts stop/disarm; use the official
+controller immediately if motion is unexpected or disarming is not confirmed.
+Do not repeatedly run it to force a minimum distance.
 
 ### Diagnose a bounded probe that did not move
 
