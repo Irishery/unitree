@@ -47,7 +47,7 @@ IK_ROT_TOL = 4.0 * math.pi / 180.0
 # Intermediate outside-the-box waypoints may lie a few millimetres beyond the
 # exact 6D workspace of a straight wrist.  The final grasp solutions remain
 # below the stricter IK_POS_TOL whenever reachable.
-IK_POS_ACCEPT = 20.0e-3
+IK_POS_ACCEPT = 25.0e-3
 IK_ROT_ACCEPT = 15.0 * math.pi / 180.0
 IK_STEP_MAX = 0.12
 CLEARANCE_MARGIN = 8.0e-3
@@ -135,17 +135,23 @@ def yaw_quaternion(yaw):
 class GraspParams:
     """Tuned grasp geometry; all offsets are in the box frame, metres."""
     box_dims: tuple = (0.255, 0.370, 0.090)
-    fingertip_reach: float = 0.210        # accepted straight-palm front-corner geometry
-    lateral_beyond_face: float = -0.035   # broad palm preload into side face
-    rise_above_top: float = -0.005        # final palm centre height relative to box centre
+    fingertip_reach: float = 0.200        # straight thumb reaches the front without top-edge entry
+    approach_reach: float = 0.210         # keep thumb ahead of front edge until side entry
+    lateral_beyond_face: float = -0.010   # initial broad-palm contact before arm preload
+    rise_above_top: float = -0.010        # palm centre below the top edge
     approach_standoff: float = 0.15       # clears the inward-projecting open thumb
     hover_standoff: float = 0.15          # stay fully outside during the forward alignment
-    palm_tilt_deg: float = 0.0            # reserved yaw trim for hardware calibration
+    align_standoff: float = 0.06          # shift forward while still clear of the side face
+    arm_preload: float = 0.020            # symmetric whole-hand squeeze after finger seating
+    front_seat: float = 0.0               # no longitudinal push after contact
+    # Symmetric correction of the calibrated 10-degree wrist roll.  A value
+    # of 10 makes both palms exactly upright (90 degrees to the table).
+    palm_tilt_deg: float = 10.0
     lift_height: float = 0.16
     # Follow the small forward motion caused by transferring the free box's
     # weight from the table to the compliant hands.  This keeps the straight
     # thumb/front-palm support on the front panel during lift.
-    lift_forward: float = 0.03
+    lift_forward: float = 0.0
     lift_pitch_deg: float = 0.0          # in-plane wrist pitch applied during lift
     finger_close_scale: float = 1.0
 
@@ -367,6 +373,8 @@ def grasp_frames(box_centre, yaw, params: GraspParams):
         axes = BASELINE_WRIST_AXES[side]
         rotation = yaw_rotation @ rotation_from_axes(
             np.asarray(axes["x"]), np.asarray(axes["y"]), np.asarray(axes["z"]))
+        rotation = rotation @ rotation_x(
+            -sign * math.radians(params.palm_tilt_deg))
         approach_axes = APPROACH_WRIST_AXES[side]
         approach_rotation = yaw_rotation @ rotation_from_axes(
             np.asarray(approach_axes["x"]), np.asarray(approach_axes["y"]),
@@ -379,7 +387,7 @@ def grasp_frames(box_centre, yaw, params: GraspParams):
                          + outward * (0.5 * params.box_dims[1]
                                        + params.lateral_beyond_face)
                          + up * max(params.rise_above_top, 0.020)
-                         - short_axis * params.fingertip_reach)
+                         - short_axis * params.approach_reach)
         frames[side] = {
             "rotation": rotation,
             "approach_rotation": approach_rotation,
@@ -393,8 +401,16 @@ def grasp_frames(box_centre, yaw, params: GraspParams):
             # final hover-to-grasp motion is purely lateral, perpendicular to
             # that face, so the wrist cannot shove the front edge away.
             "hover": approach_base + outward * params.hover_standoff,
+            # Descend here with the palm canted away from the box.  After a
+            # horizontal entry at this height, the wrist rotates upright at
+            # the side face; the open thumb never crosses the top-front edge.
+            "outside_grasp": wrist_base + outward * params.align_standoff,
             "grasp": wrist_base,
-            "lift": (wrist_base + short_axis * params.lift_forward
+            "clamp": wrist_base - outward * params.arm_preload,
+            "carry": (wrist_base - outward * params.arm_preload
+                      + short_axis * params.front_seat),
+            "lift": (wrist_base - outward * params.arm_preload
+                     + short_axis * (params.front_seat + params.lift_forward)
                      + up * params.lift_height),
         }
     return frames
@@ -416,7 +432,7 @@ def finger_targets(side, scale, params: GraspParams):
     # right thumb on the side face instead of the front panel.
     # Keep both thumb flexion joints close to zero.  Opposition comes from the
     # wrist placement at the front corner rather than a hooked fingertip.
-    thumb = np.array([0.0, -0.08 * mirror, 0.12 * mirror])
+    thumb = np.array([0.0, 0.0, 0.0])
     fingers = np.array([-0.18, -0.12, -0.18, -0.12]) * mirror
     opened = FINGER_OPEN[side] if "FINGER_OPEN" in globals() else np.array(
         [0.0, 0.15, 0.15, -0.15, -0.15, -0.15, -0.15]) * mirror

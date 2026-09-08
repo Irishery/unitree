@@ -11,7 +11,7 @@ from g1_mujoco.grasp_planning import (
     ARM_JOINTS, FINGER_OPEN, GraspKinematics, GraspParams, WAIST_JOINTS,
     blend_rotation, finger_targets, grasp_frames, rotation_y)
 from g1_mujoco.pick_env import CONTROL_JOINTS
-from g1_mujoco.sim import ARMS_AT_SIDES
+from g1_mujoco.sim import ARMS_AT_SIDES, WALK_LEG_JOINTS
 from g1_mujoco.box_geometry import backproject, fit_box_pose, red_box_mask, transform_points
 
 OUT = Path(os.environ.get("G1_PROBE_OUT", "/ws/debug_frames"))
@@ -36,13 +36,28 @@ def main():
     lateral, rise, reach, twist, scale = (float(v) for v in sys.argv[1:6])
     params = GraspParams(lateral_beyond_face=lateral, rise_above_top=rise,
                          fingertip_reach=reach, palm_tilt_deg=twist,
+                         approach_reach=float(os.environ.get(
+                             "G1_APPROACH_REACH", str(reach))),
                          approach_standoff=float(os.environ.get(
                              "G1_APPROACH_STANDOFF", "0.15")),
                          hover_standoff=float(os.environ.get(
                              "G1_HOVER_STANDOFF", "0.15")),
+                         align_standoff=float(os.environ.get(
+                             "G1_ALIGN_STANDOFF", "0.10")),
+                         arm_preload=float(os.environ.get("G1_ARM_PRELOAD", "0.020")),
+                         front_seat=float(os.environ.get("G1_FRONT_SEAT", "0.020")),
                          finger_close_scale=scale, lift_height=0.16,
                          lift_forward=float(os.environ.get("G1_LIFT_FORWARD", "0.03")),
                          lift_pitch_deg=float(os.environ.get("G1_LIFT_PITCH_DEG", "0")))
+    # During approach only, fold the distal thumb segment out of the path of
+    # the box's top-front corner.  The final target remains the same nearly
+    # straight thumb used for front-panel support.
+    open_thumb_yaw = float(os.environ.get("G1_OPEN_THUMB_YAW", "0.0"))
+    open_thumb_tip = float(os.environ.get("G1_OPEN_THUMB_TIP", "0.0"))
+    for side, mirror in (("left", 1.0), ("right", -1.0)):
+        # thumb_0 uses the same sign convention on both mirrored DEX3 hands.
+        FINGER_OPEN[side][0] = open_thumb_yaw
+        FINGER_OPEN[side][2] = open_thumb_tip * mirror
     box_yaw = float(sys.argv[6]) if len(sys.argv) > 6 else 0.0
 
     data = mujoco.MjData(model)
@@ -50,6 +65,10 @@ def main():
     jid = {n: model.jnt_qposadr[mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, n)] for n in sim_joints}
     vid = {n: model.jnt_dofadr[mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, n)] for n in sim_joints}
     aid = {n: mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_ACTUATOR, n) for n in sim_joints}
+    leg_qadr = [model.jnt_qposadr[mujoco.mj_name2id(
+        model, mujoco.mjtObj.mjOBJ_JOINT, name)] for name in WALK_LEG_JOINTS]
+    leg_vadr = [model.jnt_dofadr[mujoco.mj_name2id(
+        model, mujoco.mjtObj.mjOBJ_JOINT, name)] for name in WALK_LEG_JOINTS]
     for n, v in ARMS_AT_SIDES.items():
         if n in jid:
             data.qpos[jid[n]] = v
@@ -89,7 +108,11 @@ def main():
     frames = grasp_frames(centre, detected_yaw, params)
     arm_q = {}
     ingress_q = {}
+    descend_q = {}
     slide_q = {}
+    straighten_q = {}
+    squeeze_q = {}
+    front_seat_q = {}
     lift_q = {}
     seat_q = {}
     for side in ("left", "right"):
@@ -106,15 +129,44 @@ def main():
         arm_q.setdefault(side, {})["hover"] = kin.solve_arm_ik(
             side, frames[side]["hover"], frames[side]["approach_rotation"], q_init=seed)
         seed = arm_q[side]["hover"]
+        descend_q[side] = []
+        for alpha in np.linspace(0.25, 1.0, 4):
+            position = ((1.0 - alpha) * frames[side]["hover"]
+                        + alpha * frames[side]["outside_grasp"])
+            seed = kin.solve_arm_ik(
+                side, position, frames[side]["approach_rotation"], q_init=seed)
+            descend_q[side].append(seed)
         slide_q[side] = []
         for alpha in np.linspace(0.125, 1.0, 8):
-            position = ((1.0 - alpha) * frames[side]["hover"]
+            position = ((1.0 - alpha) * frames[side]["outside_grasp"]
                         + alpha * frames[side]["grasp"])
-            rotation = blend_rotation(
-                frames[side]["approach_rotation"], frames[side]["rotation"], alpha)
-            seed = kin.solve_arm_ik(side, position, rotation, q_init=seed)
+            seed = kin.solve_arm_ik(
+                side, position, frames[side]["approach_rotation"], q_init=seed)
             slide_q[side].append(seed)
-        arm_q[side]["grasp"] = slide_q[side][-1]
+        final_q = kin.solve_arm_ik(
+            side, frames[side]["grasp"], frames[side]["rotation"], q_init=seed)
+        straighten_q[side] = [
+            (1.0 - alpha) * seed + alpha * final_q
+            for alpha in np.linspace(0.25, 1.0, 4)
+        ]
+        arm_q[side]["grasp"] = straighten_q[side][-1]
+        seed = final_q
+        squeeze_q[side] = []
+        for alpha in np.linspace(0.25, 1.0, 4):
+            position = ((1.0 - alpha) * frames[side]["grasp"]
+                        + alpha * frames[side]["clamp"])
+            seed = kin.solve_arm_ik(
+                side, position, frames[side]["rotation"], q_init=seed)
+            squeeze_q[side].append(seed)
+        arm_q[side]["clamp"] = squeeze_q[side][-1]
+        front_seat_q[side] = []
+        for alpha in np.linspace(0.25, 1.0, 4):
+            position = ((1.0 - alpha) * frames[side]["clamp"]
+                        + alpha * frames[side]["carry"])
+            seed = kin.solve_arm_ik(
+                side, position, frames[side]["rotation"], q_init=seed)
+            front_seat_q[side].append(seed)
+        arm_q[side]["carry"] = front_seat_q[side][-1]
         lift_q[side] = []
         for dz in np.linspace(0.02, params.lift_height, 6):
             lift_alpha = dz / params.lift_height
@@ -122,12 +174,12 @@ def main():
                              @ frames[side]["rotation"])
             seed = kin.solve_arm_ik(
                 side,
-                frames[side]["grasp"]
+                frames[side]["carry"]
                 + np.array([params.lift_forward * lift_alpha, 0.0, dz]),
                 lift_rotation, q_init=seed)
             lift_q[side].append(seed)
         arm_q[side]["lift"] = lift_q[side][-1]
-        seat_q[side] = arm_q[side]["grasp"]
+        seat_q[side] = arm_q[side]["carry"]
         print(side, "wrist grasp target", frames[side]["grasp"].round(3),
               "IK residual", tuple(round(v, 4) for v in kin.last_ik_residual),
               "q_grasp", arm_q[side]["grasp"].round(2))
@@ -211,6 +263,8 @@ def main():
             data.qpos[0:3] = [0.0, 0.0, 0.793]
             data.qpos[3:7] = [1.0, 0.0, 0.0, 0.0]
             data.qvel[0:6] = 0.0
+            data.qpos[leg_qadr] = 0.0
+            data.qvel[leg_vadr] = 0.0
             for n in sim_joints:
                 finger = "_hand_" in n
                 if finger:
@@ -230,6 +284,8 @@ def main():
             data.qpos[0:3] = [0.0, 0.0, 0.793]
             data.qpos[3:7] = [1.0, 0.0, 0.0, 0.0]
             data.qvel[0:6] = 0.0
+            data.qpos[leg_qadr] = 0.0
+            data.qvel[leg_vadr] = 0.0
             mujoco.mj_forward(model, data)
             heights.append(data.xpos[box_body][2])
             tilts.append(box_tilt_deg())
@@ -242,7 +298,9 @@ def main():
               f"contacts_during {max_contacts} end {count} {sorted(bodies)[:3]}")
         if hand_table_contacts():
             print("   hand-table", hand_table_contacts())
-        if label == "close" or label.startswith("lift_") or label == "hold_30s":
+        if (label == "close" or label.startswith("lift_")
+                or label.startswith("whole_hand_clamp_")
+                or label.startswith("thumb_front_seat_") or label == "hold_30s"):
             print("   box contacts body/local_xyz", box_contact_details())
         for side in ("left", "right"):
             tips = []
@@ -285,15 +343,39 @@ def main():
     set_joint_goal("hover")
     step(1.5, label="hover")
     snapshot("hover")
+    for index in range(4):
+        for side in ("left", "right"):
+            for name, value in zip(ARM_JOINTS[side], descend_q[side][index]):
+                goal[name] = float(value)
+        step(0.6, rate=0.55, label=f"descend_{index + 1}")
+    snapshot("lowered_outside")
     for index in range(8):
         for side in ("left", "right"):
             for name, value in zip(ARM_JOINTS[side], slide_q[side][index]):
                 goal[name] = float(value)
         step(0.6, rate=0.55, label=f"side_clamp_{index + 1}")
+    for index in range(4):
+        for side in ("left", "right"):
+            for name, value in zip(ARM_JOINTS[side], straighten_q[side][index]):
+                goal[name] = float(value)
+        step(0.6, rate=0.45, label=f"straighten_{index + 1}")
     snapshot("grasp")
     set_joint_goal("grasp", close_fingers=True)
     step(2.0, rate=6.0, label="close")
     snapshot("close")
+    for index in range(4):
+        for side in ("left", "right"):
+            for name, value in zip(ARM_JOINTS[side], squeeze_q[side][index]):
+                goal[name] = float(value)
+        step(0.7, rate=0.35, label=f"whole_hand_clamp_{index + 1}")
+    snapshot("whole_hand_clamp")
+    if params.front_seat > 1e-6:
+        for index in range(4):
+            for side in ("left", "right"):
+                for name, value in zip(ARM_JOINTS[side], front_seat_q[side][index]):
+                    goal[name] = float(value)
+            step(0.7, rate=0.30, label=f"thumb_front_seat_{index + 1}")
+        snapshot("thumb_front_seated")
     if os.environ.get("G1_PROBE_STOP_AFTER_CLOSE") == "1":
         renderer.close()
         return
@@ -328,12 +410,12 @@ def main():
         target_index = max(0, index - 1)
         for side in ("left", "right"):
             for name, value in zip(ARM_JOINTS[side],
-                                   lift_q[side][target_index] if index else arm_q[side]["grasp"]):
+                                   lift_q[side][target_index] if index else arm_q[side]["carry"]):
                 goal[name] = float(value)
         step(0.8, rate=0.55, label=f"place_{6 - index}")
     step(1.5, rate=0.4, label="place_settle")
     for side in ("left", "right"):
-        for name, value in zip(ARM_JOINTS[side], seat_q[side]):
+        for name, value in zip(ARM_JOINTS[side], arm_q[side]["carry"]):
             goal[name] = float(value)
     step(2.0, rate=0.45, label="seat")
     set_joint_goal("grasp", close_fingers=False, hold_arms=None)

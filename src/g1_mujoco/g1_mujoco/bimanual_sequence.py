@@ -32,7 +32,7 @@ def build_pick_plan(kinematics, centre, yaw, params=None):
     """Build DETECT-to-RETREAT waypoints using only an observed box pose."""
     params = params or GraspParams()
     frames = grasp_frames(np.asarray(centre, dtype=float), yaw, params)
-    ingress, slide, lift = {}, {}, {}
+    ingress, descend, slide, straighten, squeeze, front_seat, lift = {}, {}, {}, {}, {}, {}, {}
     arm = {}
     for side, sign in (("left", 1.0), ("right", -1.0)):
         seed = READY[side]
@@ -47,15 +47,44 @@ def build_pick_plan(kinematics, centre, yaw, params=None):
         seed = kinematics.solve_arm_ik(
             side, frames[side]["hover"], frames[side]["approach_rotation"], q_init=seed)
         arm[side]["hover"] = seed
+        descend[side] = []
+        for alpha in np.linspace(0.25, 1.0, 4):
+            position = ((1.0 - alpha) * frames[side]["hover"]
+                        + alpha * frames[side]["outside_grasp"])
+            seed = kinematics.solve_arm_ik(
+                side, position, frames[side]["approach_rotation"], q_init=seed)
+            descend[side].append(seed)
         slide[side] = []
         for alpha in np.linspace(0.125, 1.0, 8):
-            position = ((1.0 - alpha) * frames[side]["hover"]
+            position = ((1.0 - alpha) * frames[side]["outside_grasp"]
                         + alpha * frames[side]["grasp"])
-            rotation = blend_rotation(
-                frames[side]["approach_rotation"], frames[side]["rotation"], alpha)
-            seed = kinematics.solve_arm_ik(side, position, rotation, q_init=seed)
+            seed = kinematics.solve_arm_ik(
+                side, position, frames[side]["approach_rotation"], q_init=seed)
             slide[side].append(seed)
-        arm[side]["grasp"] = slide[side][-1]
+        final_q = kinematics.solve_arm_ik(
+            side, frames[side]["grasp"], frames[side]["rotation"], q_init=seed)
+        straighten[side] = [
+            (1.0 - alpha) * seed + alpha * final_q
+            for alpha in np.linspace(0.25, 1.0, 4)
+        ]
+        arm[side]["grasp"] = straighten[side][-1]
+        seed = final_q
+        squeeze[side] = []
+        for alpha in np.linspace(0.25, 1.0, 4):
+            position = ((1.0 - alpha) * frames[side]["grasp"]
+                        + alpha * frames[side]["clamp"])
+            seed = kinematics.solve_arm_ik(
+                side, position, frames[side]["rotation"], q_init=seed)
+            squeeze[side].append(seed)
+        arm[side]["clamp"] = squeeze[side][-1]
+        front_seat[side] = []
+        for alpha in np.linspace(0.25, 1.0, 4):
+            position = ((1.0 - alpha) * frames[side]["clamp"]
+                        + alpha * frames[side]["carry"])
+            seed = kinematics.solve_arm_ik(
+                side, position, frames[side]["rotation"], q_init=seed)
+            front_seat[side].append(seed)
+        arm[side]["carry"] = front_seat[side][-1]
         lift[side] = []
         for dz in np.linspace(0.04, params.lift_height, 6):
             lift_alpha = dz / params.lift_height
@@ -63,7 +92,7 @@ def build_pick_plan(kinematics, centre, yaw, params=None):
                              @ frames[side]["rotation"])
             seed = kinematics.solve_arm_ik(
                 side,
-                frames[side]["grasp"]
+                frames[side]["carry"]
                 + np.array([params.lift_forward * lift_alpha, 0.0, dz]),
                 lift_rotation, q_init=seed)
             lift[side].append(seed)
@@ -75,10 +104,23 @@ def build_pick_plan(kinematics, centre, yaw, params=None):
     segments += [
         Segment("hover", 1.5, {s: arm[s]["hover"] for s in arm}, opened),
     ]
+    for index in range(4):
+        segments.append(Segment(f"descend_{index + 1}", 0.6,
+                                {s: descend[s][index] for s in descend}, opened))
     for index in range(8):
         segments.append(Segment(f"side_clamp_{index + 1}", 0.6,
                                 {s: slide[s][index] for s in slide}, opened))
+    for index in range(4):
+        segments.append(Segment(f"straighten_{index + 1}", 0.6,
+                                {s: straighten[s][index] for s in straighten}, opened))
     segments.append(Segment("close", 2.0, {s: arm[s]["grasp"] for s in arm}, closed))
+    for index in range(4):
+        segments.append(Segment(f"whole_hand_clamp_{index + 1}", 0.7,
+                                {s: squeeze[s][index] for s in squeeze}, closed))
+    if params.front_seat > 1e-6:
+        for index in range(4):
+            segments.append(Segment(f"thumb_front_seat_{index + 1}", 0.7,
+                                    {s: front_seat[s][index] for s in front_seat}, closed))
     for index in range(6):
         segments.append(Segment(f"lift_{index + 1}", 2.5,
                                 {s: lift[s][index] for s in lift}, closed))
@@ -87,11 +129,11 @@ def build_pick_plan(kinematics, centre, yaw, params=None):
         Segment("hold", 30.0, {s: lift[s][-1] for s in lift}, closed),
     ]
     for index in reversed(range(6)):
-        target = {s: (lift[s][index - 1] if index else arm[s]["grasp"]) for s in lift}
+        target = {s: (lift[s][index - 1] if index else arm[s]["carry"]) for s in lift}
         segments.append(Segment(f"place_{6 - index}", 0.9, target, closed))
     # Returning to the original grasp pose already seats the box on the table.
     # Driving the wrists lower would scrape the straight fingers along it.
-    lower = {side: arm[side]["grasp"] for side in ("left", "right")}
+    lower = {side: arm[side]["carry"] for side in ("left", "right")}
     segments += [
         Segment("seat", 2.0, lower, closed),
         Segment("release", 1.5, lower, opened),
