@@ -101,6 +101,11 @@ def main():
     for geom in pelvis.iter("geom"):
         geom.set("contype", "2" if physical_tabletop else "0")
         geom.set("conaffinity", "4" if physical_tabletop else "0")
+        # DEX3 rubber pads are represented through Coulomb friction only.
+        # There are no extra collision shapes or grasp constraints.
+        parent = next((body for body in pelvis.iter("body") if geom in list(body)), None)
+        if physical_tabletop and parent is not None and "_hand_" in parent.get("name", ""):
+            geom.set("friction", "4.0 0.03 0.002")
     torso = pelvis.find(".//body[@name='torso_link']")
     if torso is None:
         raise RuntimeError("could not find torso_link in official model")

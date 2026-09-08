@@ -10,7 +10,8 @@ setup(
         ("share/ament_index/resource_index/packages", ["resource/g1_mujoco"]),
         ("share/g1_mujoco", ["package.xml"]),
         ("share/g1_mujoco/config", ["config/slam_toolbox.yaml"]),
-        ("share/g1_mujoco/launch", ["launch/sim.launch.py", "launch/navigation.launch.py"]),
+        ("share/g1_mujoco/launch", ["launch/sim.launch.py", "launch/navigation.launch.py",
+                                    "launch/pick.launch.py"]),
         ("share/g1_mujoco/rviz", [
             "rviz/g1_mujoco.rviz",
             "rviz/g1_mujoco_nav.rviz",
@@ -24,6 +25,7 @@ setup(
         "sim = g1_mujoco.sim:main",
         "box_detector = g1_mujoco.box_detector:main",
         "pick_controller = g1_mujoco.pick_controller:main",
+        "dual_pick_controller = g1_mujoco.dual_pick_controller:main",
         "train_rl = g1_mujoco.train_rl:main",
         "evaluate_rl = g1_mujoco.evaluate_rl:main",
         "voxel_grid_relay = g1_mujoco.voxel_grid_relay:main",

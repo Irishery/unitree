@@ -8,7 +8,7 @@ import mujoco
 import numpy as np
 import rclpy
 from rclpy.node import Node
-from geometry_msgs.msg import TransformStamped, Twist
+from geometry_msgs.msg import PoseStamped, TransformStamped, Twist
 from nav_msgs.msg import Odometry
 from sensor_msgs.msg import CameraInfo, Image, JointState, LaserScan, PointCloud2
 from sensor_msgs_py import point_cloud2
@@ -164,6 +164,9 @@ class G1Mujoco(Node):
         self.declare_parameter("walk_policy", WALK_POLICY_PATH)
         self.declare_parameter("cmd_vel_topic", "/cmd_vel")
         self.declare_parameter("smoothed_cmd_vel_topic", "/cmd_vel_smoothed")
+        self.declare_parameter("box_x", 0.40)
+        self.declare_parameter("box_y", 0.0)
+        self.declare_parameter("box_yaw", 0.0)
         self.tabletop_pick = bool(self.get_parameter("tabletop_pick").value)
         self.walk = bool(self.get_parameter("walk").value)
         self.viewer_lite = bool(self.get_parameter("viewer_lite").value)
@@ -184,6 +187,13 @@ class G1Mujoco(Node):
             scene_path = self.build_lite_scene(scene_path)
             temporary_scene_paths.append(scene_path)
         self.model = mujoco.MjModel.from_xml_path(scene_path)
+        if self.tabletop_pick:
+            for geom_id in range(self.model.ngeom):
+                body = mujoco.mj_id2name(
+                    self.model, mujoco.mjtObj.mjOBJ_BODY,
+                    self.model.geom_bodyid[geom_id]) or ""
+                if "_hand_" in body:
+                    self.model.geom_friction[geom_id, 0] = 4.0
         for temporary_scene_path in reversed(temporary_scene_paths):
             try:
                 os.unlink(temporary_scene_path)
@@ -219,6 +229,18 @@ class G1Mujoco(Node):
         # for both kinematic and walking navigation.
         for name, position in ARMS_AT_SIDES.items():
             self.data.qpos[self.model.jnt_qposadr[self.joint_ids[name]]] = position
+        self.box_joint_id = mujoco.mj_name2id(
+            self.model, mujoco.mjtObj.mjOBJ_JOINT, "pickup_box_free")
+        self.box_body_id = mujoco.mj_name2id(
+            self.model, mujoco.mjtObj.mjOBJ_BODY, "pickup_box")
+        if self.tabletop_pick and self.box_joint_id >= 0:
+            qadr = int(self.model.jnt_qposadr[self.box_joint_id])
+            yaw = float(self.get_parameter("box_yaw").value)
+            self.data.qpos[qadr:qadr + 7] = [
+                float(self.get_parameter("box_x").value),
+                float(self.get_parameter("box_y").value), 0.800,
+                *yaw_to_mujoco_quaternion(yaw),
+            ]
         if self.walk:
             # Start the legs in the policy's default pose so the first PD
             # targets match the physical state.
@@ -253,6 +275,8 @@ class G1Mujoco(Node):
         self.publisher = self.create_publisher(JointState, "/g1/joint_states", 10)
         self.contacts_pub = self.create_publisher(Int32, "/g1/mujoco/hand_box_contacts", 10)
         self.grasp_pub = self.create_publisher(Bool, "/g1/mujoco/physical_grasp", 10)
+        self.box_truth_pub = self.create_publisher(
+            PoseStamped, "/g1/mujoco/evaluation/box_ground_truth", 10)
         self.odom_pub = self.create_publisher(Odometry, "/odom", 10)
         self.scan_pub = self.create_publisher(LaserScan, "/scan", 10)
         self.mid360_points_pub = self.create_publisher(PointCloud2, "/mid360/points", 10)
@@ -765,8 +789,12 @@ class G1Mujoco(Node):
             self.apply_base_pose()
             for name, actuator in self.actuator_ids.items():
                 finger = "_hand_" in name
-                kp, kd = (3.0, 0.18) if finger else (35.0, 1.8)
-                limit = 0.9 if finger else 18.0
+                if self.tabletop_pick:
+                    kp, kd = (12.0, 0.45) if finger else (80.0, 3.0)
+                    limit = 3.0 if finger else 35.0
+                else:
+                    kp, kd = (3.0, 0.18) if finger else (35.0, 1.8)
+                    limit = 0.9 if finger else 18.0
                 torque = kp * (self.target[name] - self.qpos(name)) - kd * self.qvel(name)
                 self.data.ctrl[actuator] = max(-limit, min(limit, torque))
         mujoco.mj_step(self.model, self.data)
@@ -1064,6 +1092,17 @@ class G1Mujoco(Node):
         # At least two distinct contact points is a measurable contact grasp
         # signal. It does not alter physics or attach the object.
         self.grasp_pub.publish(Bool(data=contacts >= 2))
+        if self.tabletop_pick and self.box_body_id >= 0:
+            truth = PoseStamped()
+            truth.header.stamp, truth.header.frame_id = stamp, "odom"
+            position = self.data.xpos[self.box_body_id]
+            quaternion = self.data.xquat[self.box_body_id]  # MuJoCo w,x,y,z
+            truth.pose.position.x, truth.pose.position.y, truth.pose.position.z = map(float, position)
+            truth.pose.orientation.w = float(quaternion[0])
+            truth.pose.orientation.x = float(quaternion[1])
+            truth.pose.orientation.y = float(quaternion[2])
+            truth.pose.orientation.z = float(quaternion[3])
+            self.box_truth_pub.publish(truth)
 
     def camera_info(self, stamp):
         info = CameraInfo()
