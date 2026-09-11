@@ -21,6 +21,7 @@ READY = {
     "left": np.array([0.623, 0.886, 0.470, 0.289, -0.415, -0.445, -0.379]),
     "right": np.array([0.623, -0.886, -0.470, 0.289, 0.415, -0.445, 0.379]),
 }
+MIRROR_ARM = np.array([1.0, -1.0, -1.0, 1.0, -1.0, 1.0, -1.0])
 
 
 def main():
@@ -34,7 +35,11 @@ def main():
         if "_hand_" in body:
             model.geom_friction[geom_id, 0] = 4.0
     lateral, rise, reach, twist, scale = (float(v) for v in sys.argv[1:6])
-    params = GraspParams(lateral_beyond_face=lateral, rise_above_top=rise,
+    box_length = float(os.environ.get("G1_BOX_LENGTH", "0.255"))
+    box_width = float(os.environ.get("G1_BOX_WIDTH", "0.370"))
+    box_height = float(os.environ.get("G1_BOX_HEIGHT", "0.09"))
+    params = GraspParams(box_dims=(box_length, box_width, box_height),
+                         lateral_beyond_face=lateral, rise_above_top=rise,
                          fingertip_reach=reach, palm_tilt_deg=twist,
                          approach_reach=float(os.environ.get(
                              "G1_APPROACH_REACH", str(reach))),
@@ -46,7 +51,8 @@ def main():
                              "G1_ALIGN_STANDOFF", "0.10")),
                          arm_preload=float(os.environ.get("G1_ARM_PRELOAD", "0.020")),
                          front_seat=float(os.environ.get("G1_FRONT_SEAT", "0.020")),
-                         finger_close_scale=scale, lift_height=0.16,
+                         finger_close_scale=scale,
+                         lift_height=float(os.environ.get("G1_LIFT_HEIGHT", "0.132")),
                          lift_forward=float(os.environ.get("G1_LIFT_FORWARD", "0.03")),
                          lift_pitch_deg=float(os.environ.get("G1_LIFT_PITCH_DEG", "0")))
     # During approach only, fold the distal thumb segment out of the path of
@@ -77,7 +83,8 @@ def main():
     box_geom = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_GEOM, "pickup_box_geom")
     box_x = float(sys.argv[7]) if len(sys.argv) > 7 else 0.40
     box_y = float(sys.argv[8]) if len(sys.argv) > 8 else 0.0
-    data.qpos[box_q:box_q + 7] = [box_x, box_y, 0.80,
+    box_z = 0.755 + 0.5 * box_height
+    data.qpos[box_q:box_q + 7] = [box_x, box_y, box_z,
                                   np.cos(box_yaw * 0.5), 0.0, 0.0, np.sin(box_yaw * 0.5)]
     mujoco.mj_forward(model, data)
     target = {n: data.qpos[jid[n]] for n in sim_joints}
@@ -96,14 +103,14 @@ def main():
     camera_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_CAMERA, "d435i")
     camera_rotation = data.cam_xmat[camera_id].reshape(3, 3) @ np.diag([1.0, -1.0, -1.0])
     points = transform_points(points, camera_rotation, data.cam_xpos[camera_id])
-    detected = fit_box_pose(points)
+    detected = fit_box_pose(points, dims=(box_length, box_width, box_height))
     if detected is None:
         raise RuntimeError("RGB-D box detection failed")
     centre, detected_yaw = detected["centre"], detected["yaw"]
     yaw_error = min(abs(np.arctan2(np.sin(detected_yaw - box_yaw), np.cos(detected_yaw - box_yaw))),
                     abs(np.pi - abs(np.arctan2(np.sin(detected_yaw - box_yaw), np.cos(detected_yaw - box_yaw)))))
     print("RGBD detected", centre.round(4), "yaw", round(detected_yaw, 4),
-          "GT errors", round(float(np.linalg.norm(centre - [box_x, box_y, .8])), 4),
+          "GT errors", round(float(np.linalg.norm(centre - [box_x, box_y, box_z])), 4),
           round(float(np.degrees(yaw_error)), 2), "deg")
     frames = grasp_frames(centre, detected_yaw, params)
     arm_q = {}
@@ -114,37 +121,45 @@ def main():
     squeeze_q = {}
     front_seat_q = {}
     lift_q = {}
+    hold_q = {}
     seat_q = {}
     for side in ("left", "right"):
         sign = 1.0 if side == "left" else -1.0
         seed = READY[side]
         ingress_q[side] = []
         start_pos = np.array([0.05, sign * 0.40, 0.95])
-        for alpha in np.linspace(0.2, 1.0, 5):
+        for index, alpha in enumerate(np.linspace(0.2, 1.0, 5)):
             position = start_pos * (1.0 - alpha) + frames[side]["pregrasp"] * alpha
+            q_init = (MIRROR_ARM * ingress_q["left"][index]
+                      if side == "right" else seed)
             seed = kin.solve_arm_ik(
-                side, position, frames[side]["approach_rotation"], q_init=seed)
+                side, position, frames[side]["approach_rotation"], q_init=q_init)
             ingress_q[side].append(seed)
         arm_q.setdefault(side, {})["pregrasp"] = ingress_q[side][-1]
+        q_init = MIRROR_ARM * arm_q["left"]["hover"] if side == "right" else seed
         arm_q.setdefault(side, {})["hover"] = kin.solve_arm_ik(
-            side, frames[side]["hover"], frames[side]["approach_rotation"], q_init=seed)
+            side, frames[side]["hover"], frames[side]["approach_rotation"], q_init=q_init)
         seed = arm_q[side]["hover"]
         descend_q[side] = []
-        for alpha in np.linspace(0.25, 1.0, 4):
+        for index, alpha in enumerate(np.linspace(0.25, 1.0, 4)):
             position = ((1.0 - alpha) * frames[side]["hover"]
                         + alpha * frames[side]["outside_grasp"])
+            q_init = (MIRROR_ARM * descend_q["left"][index]
+                      if side == "right" else seed)
             seed = kin.solve_arm_ik(
-                side, position, frames[side]["approach_rotation"], q_init=seed)
+                side, position, frames[side]["approach_rotation"], q_init=q_init)
             descend_q[side].append(seed)
         slide_q[side] = []
-        for alpha in np.linspace(0.125, 1.0, 8):
+        for index, alpha in enumerate(np.linspace(0.125, 1.0, 8)):
             position = ((1.0 - alpha) * frames[side]["outside_grasp"]
                         + alpha * frames[side]["grasp"])
+            q_init = MIRROR_ARM * slide_q["left"][index] if side == "right" else seed
             seed = kin.solve_arm_ik(
-                side, position, frames[side]["approach_rotation"], q_init=seed)
+                side, position, frames[side]["approach_rotation"], q_init=q_init)
             slide_q[side].append(seed)
+        q_init = MIRROR_ARM * arm_q["left"]["grasp"] if side == "right" else seed
         final_q = kin.solve_arm_ik(
-            side, frames[side]["grasp"], frames[side]["rotation"], q_init=seed)
+            side, frames[side]["grasp"], frames[side]["rotation"], q_init=q_init)
         straighten_q[side] = [
             (1.0 - alpha) * seed + alpha * final_q
             for alpha in np.linspace(0.25, 1.0, 4)
@@ -152,33 +167,51 @@ def main():
         arm_q[side]["grasp"] = straighten_q[side][-1]
         seed = final_q
         squeeze_q[side] = []
-        for alpha in np.linspace(0.25, 1.0, 4):
+        for index, alpha in enumerate(np.linspace(0.25, 1.0, 4)):
             position = ((1.0 - alpha) * frames[side]["grasp"]
                         + alpha * frames[side]["clamp"])
+            q_init = MIRROR_ARM * squeeze_q["left"][index] if side == "right" else seed
             seed = kin.solve_arm_ik(
-                side, position, frames[side]["rotation"], q_init=seed)
+                side, position, frames[side]["rotation"], q_init=q_init)
             squeeze_q[side].append(seed)
         arm_q[side]["clamp"] = squeeze_q[side][-1]
         front_seat_q[side] = []
-        for alpha in np.linspace(0.25, 1.0, 4):
+        for index, alpha in enumerate(np.linspace(0.25, 1.0, 4)):
             position = ((1.0 - alpha) * frames[side]["clamp"]
                         + alpha * frames[side]["carry"])
+            q_init = (MIRROR_ARM * front_seat_q["left"][index]
+                      if side == "right" else seed)
             seed = kin.solve_arm_ik(
-                side, position, frames[side]["rotation"], q_init=seed)
+                side, position, frames[side]["rotation"], q_init=q_init)
             front_seat_q[side].append(seed)
         arm_q[side]["carry"] = front_seat_q[side][-1]
         lift_q[side] = []
-        for dz in np.linspace(0.02, params.lift_height, 6):
+        # Keep the elbow on its normal forward-bending branch while carrying.
+        # Letting it cross through zero makes the wrist motors reverse their
+        # load abruptly; the compliant wrist then lags behind the shoulder and
+        # pitches the box off the straight thumb support.
+        elbow = f"{side}_elbow_joint"
+        lift_bounds = {elbow: (float(os.environ.get("G1_LIFT_ELBOW_MIN", "0.0")),
+                               kin.ranges[elbow][1])}
+        for index, dz in enumerate(np.linspace(0.02, params.lift_height, 6)):
             lift_alpha = dz / params.lift_height
             lift_rotation = (rotation_y(np.deg2rad(params.lift_pitch_deg) * lift_alpha)
                              @ frames[side]["rotation"])
+            q_init = MIRROR_ARM * lift_q["left"][index] if side == "right" else seed
             seed = kin.solve_arm_ik(
                 side,
                 frames[side]["carry"]
                 + np.array([params.lift_forward * lift_alpha, 0.0, dz]),
-                lift_rotation, q_init=seed)
+                lift_rotation, q_init=q_init, joint_bounds=lift_bounds)
             lift_q[side].append(seed)
         arm_q[side]["lift"] = lift_q[side][-1]
+        hold_pitch = float(os.environ.get(
+            "G1_HOLD_PITCH_DEG", str(params.hold_pitch_deg)))
+        hold_rotation = rotation_y(np.deg2rad(hold_pitch)) @ frames[side]["rotation"]
+        q_init = MIRROR_ARM * hold_q["left"] if side == "right" else seed
+        hold_q[side] = kin.solve_arm_ik(
+            side, frames[side]["lift"], hold_rotation, q_init=q_init,
+            joint_bounds=lift_bounds)
         seat_q[side] = arm_q[side]["carry"]
         print(side, "wrist grasp target", frames[side]["grasp"].round(3),
               "IK residual", tuple(round(v, 4) for v in kin.last_ik_residual),
@@ -186,8 +219,29 @@ def main():
         for stage in ("pregrasp", "hover", "grasp", "lift"):
             print("  ", stage, arm_q[side][stage].round(3))
 
+    if os.environ.get("G1_MIRROR_RIGHT_FROM_LEFT") == "1":
+        # For the centred calibration case, solve one arm and mirror its
+        # complete continuous trajectory.  Independent redundant 7-DoF IK
+        # occasionally selected different elbow branches even for symmetric
+        # targets, making one wrist reverse abruptly during the lift.
+        for trajectories in (ingress_q, descend_q, slide_q, straighten_q,
+                             squeeze_q, front_seat_q, lift_q):
+            trajectories["right"] = [MIRROR_ARM * q for q in trajectories["left"]]
+        arm_q["right"] = {stage: MIRROR_ARM * q
+                          for stage, q in arm_q["left"].items()}
+        hold_q["right"] = MIRROR_ARM * hold_q["left"]
+        seat_q["right"] = MIRROR_ARM * seat_q["left"]
+
     hand_names = {side: [n for n in CONTROL_JOINTS if n.startswith(f"{side}_hand_")]
                   for side in ("left", "right")}
+    hold_hands = {}
+    thumb_back = float(os.environ.get("G1_HOLD_THUMB_BACK", "0"))
+    for side, mirror in (("left", 1.0), ("right", -1.0)):
+        hold_hands[side] = finger_targets(
+            side, params.finger_close_scale, params).copy()
+        # thumb_1 is mirrored between hands.  Move it slightly toward the
+        # approach/retracted direction while the box leans onto the thumbs.
+        hold_hands[side][1] = -mirror * thumb_back
     camera = mujoco.MjvCamera()
     camera.lookat = [0.42, 0.0, 0.88]
     camera.distance = 1.35
@@ -255,10 +309,11 @@ def main():
                 bodies |= {b for b in (b1, b2) if "_hand_" in b}
         return sorted(bodies)
 
-    def step(seconds, rate=1.6, label="step"):
+    def step(seconds, rate=1.6, label="step", capture_interval=0.0):
         max_contacts = 0
         heights = []
         tilts = []
+        next_capture = float(capture_interval)
         for step_index in range(int(seconds / 0.002)):
             data.qpos[0:3] = [0.0, 0.0, 0.793]
             data.qpos[3:7] = [1.0, 0.0, 0.0, 0.0]
@@ -291,6 +346,10 @@ def main():
             tilts.append(box_tilt_deg())
             if step_index % 25 == 0:
                 max_contacts = max(max_contacts, robot_box_contacts()[0])
+            elapsed = (step_index + 1) * 0.002
+            if capture_interval > 0.0 and elapsed + 1e-9 >= next_capture:
+                snapshot(f"{label}_{next_capture:04.1f}s")
+                next_capture += capture_interval
         count, bodies = robot_box_contacts()
         tilt_log[label] = tilts
         print(f"{label}: box xyz {data.xpos[box_body].round(3).tolist()} zmin {min(heights):.3f} "
@@ -397,8 +456,20 @@ def main():
         if stop_after and index + 1 >= stop_after:
             renderer.close()
             return
-    heights.extend(step(15.0, rate=0.7, label="settle_before_hold"))
-    hold_heights = step(30.0, rate=0.7, label="hold_30s")
+    if abs(float(os.environ.get(
+            "G1_HOLD_PITCH_DEG", str(params.hold_pitch_deg)))) > 1e-6:
+        for side in ("left", "right"):
+            for name, value in zip(ARM_JOINTS[side], hold_q[side]):
+                goal[name] = float(value)
+            for name, value in zip(hand_names[side], hold_hands[side]):
+                goal[name] = float(value)
+        heights.extend(step(4.0, rate=0.15, label="tilt_to_thumb",
+                            capture_interval=1.0))
+        snapshot("thumb_supported_hold_pose")
+    heights.extend(step(15.0, rate=0.7, label="settle_before_hold",
+                        capture_interval=5.0))
+    hold_heights = step(30.0, rate=0.7, label="hold_30s",
+                        capture_interval=5.0)
     hold_tilts = np.asarray(tilt_log["hold_30s"])
     heights.extend(hold_heights)
     heights = np.asarray(heights)
@@ -406,6 +477,17 @@ def main():
     print(f"HOLD box z start {hold_heights[0]:.3f} min {hold_heights.min():.3f} "
           f"end {hold_heights[-1]:.3f} slip {hold_heights.max() - hold_heights.min():.3f} "
           f"tilt_max_deg {hold_tilts.max():.2f} tilt_end_deg {hold_tilts[-1]:.2f}")
+    if abs(float(os.environ.get(
+            "G1_HOLD_PITCH_DEG", str(params.hold_pitch_deg)))) > 1e-6:
+        for side in ("left", "right"):
+            for name, value in zip(ARM_JOINTS[side], lift_q[side][-1]):
+                goal[name] = float(value)
+            for name, value in zip(
+                    hand_names[side], finger_targets(
+                        side, params.finger_close_scale, params)):
+                goal[name] = float(value)
+        step(4.0, rate=0.15, label="level_before_place", capture_interval=1.0)
+        snapshot("level_before_place")
     for index in reversed(range(6)):
         target_index = max(0, index - 1)
         for side in ("left", "right"):

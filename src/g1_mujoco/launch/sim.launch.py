@@ -45,6 +45,10 @@ def generate_launch_description():
         DeclareLaunchArgument("box_x", default_value="0.40"),
         DeclareLaunchArgument("box_y", default_value="0.0"),
         DeclareLaunchArgument("box_yaw", default_value="0.0"),
+        DeclareLaunchArgument("box_side_rails", default_value="false"),
+        DeclareLaunchArgument("box_length", default_value="0.255"),
+        DeclareLaunchArgument("box_width", default_value="0.370"),
+        DeclareLaunchArgument("box_height", default_value="0.09"),
         DeclareLaunchArgument("loco_api", default_value="false"),
         DeclareLaunchArgument(
             "loco_api_request_topic", default_value="/g1/sim/api/sport/request"),
@@ -72,6 +76,7 @@ def generate_launch_description():
                 "box_x": LaunchConfiguration("box_x"),
                 "box_y": LaunchConfiguration("box_y"),
                 "box_yaw": LaunchConfiguration("box_yaw"),
+                "box_side_rails": LaunchConfiguration("box_side_rails"),
                 "cmd_vel_topic": sim_cmd_vel_topic,
                 "smoothed_cmd_vel_topic": sim_smoothed_cmd_vel_topic,
             }],
@@ -148,6 +153,11 @@ def generate_launch_description():
             executable="box_detector",
             name="g1_box_detector",
             condition=IfCondition(tabletop_pick),
+            parameters=[{
+                "box_length": LaunchConfiguration("box_length"),
+                "box_width": LaunchConfiguration("box_width"),
+                "box_height": LaunchConfiguration("box_height"),
+            }],
             output="screen",
         ),
         Node(
@@ -155,6 +165,12 @@ def generate_launch_description():
             executable="dual_pick_controller",
             name="g1_dual_pick_controller",
             condition=IfCondition(tabletop_pick),
+            parameters=[{
+                "box_side_rails": LaunchConfiguration("box_side_rails"),
+                "box_length": LaunchConfiguration("box_length"),
+                "box_width": LaunchConfiguration("box_width"),
+                "box_height": LaunchConfiguration("box_height"),
+            }],
             output="screen",
         ),
         IncludeLaunchDescription(

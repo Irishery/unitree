@@ -134,25 +134,27 @@ def yaw_quaternion(yaw):
 @dataclass
 class GraspParams:
     """Tuned grasp geometry; all offsets are in the box frame, metres."""
-    box_dims: tuple = (0.255, 0.370, 0.090)
-    fingertip_reach: float = 0.200        # straight thumb reaches the front without top-edge entry
-    approach_reach: float = 0.210         # keep thumb ahead of front edge until side entry
-    lateral_beyond_face: float = -0.010   # initial broad-palm contact before arm preload
+    box_dims: tuple = (0.150, 0.250, 0.140)
+    fingertip_reach: float = 0.140        # straight thumb on the short front panel
+    approach_reach: float = 0.170         # keep thumb ahead of front edge until side entry
+    lateral_beyond_face: float = 0.010    # initial broad-palm contact before arm preload
     rise_above_top: float = -0.010        # palm centre below the top edge
-    approach_standoff: float = 0.15       # clears the inward-projecting open thumb
-    hover_standoff: float = 0.15          # stay fully outside during the forward alignment
+    approach_standoff: float = 0.10       # clears the inward-projecting open thumb
+    hover_standoff: float = 0.10          # stay fully outside during the forward alignment
     align_standoff: float = 0.06          # shift forward while still clear of the side face
-    arm_preload: float = 0.020            # symmetric whole-hand squeeze after finger seating
+    arm_preload: float = 0.030            # symmetric whole-hand squeeze after finger seating
     front_seat: float = 0.0               # no longitudinal push after contact
     # Symmetric correction of the calibrated 10-degree wrist roll.  A value
     # of 10 makes both palms exactly upright (90 degrees to the table).
     palm_tilt_deg: float = 10.0
-    lift_height: float = 0.16
+    lift_height: float = 0.116            # produces 11.4 cm held object rise in the tuned grip
     # Follow the small forward motion caused by transferring the free box's
     # weight from the table to the compliant hands.  This keeps the straight
     # thumb/front-palm support on the front panel during lift.
-    lift_forward: float = 0.0
+    lift_forward: float = 0.034
     lift_pitch_deg: float = 0.0          # in-plane wrist pitch applied during lift
+    lift_elbow_min: float = 0.0          # do not reverse the elbow branch during carrying
+    hold_pitch_deg: float = -15.0        # lean toward the robot and load the straight thumbs
     finger_close_scale: float = 1.0
 
 
@@ -161,7 +163,8 @@ class GraspKinematics:
 
     def __init__(self, model_path=None):
         description = Path(os.environ.get("G1_DESCRIPTION_DIR", "/opt/unitree_ros/robots/g1_description"))
-        path = str(model_path or description / "g1_29dof_with_dex3_tabletop.xml")
+        path = str(model_path or os.environ.get("G1_MUJOCO_MODEL")
+                   or description / "g1_29dof_with_dex3_tabletop.xml")
         self.model = mujoco.MjModel.from_xml_path(path)
         self.data = mujoco.MjData(self.model)
         self.joint_ids = {}
@@ -216,7 +219,7 @@ class GraspKinematics:
         right = self._collision_geoms(lambda b: arm_of(b) == "right")
         robot_rest = self._collision_geoms(lambda b: arm_of(b) is None and b not in ("world",))
         table = [mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_GEOM, "table_top")]
-        box = [mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_GEOM, "pickup_box_geom")]
+        box = self._collision_geoms(lambda body: body == "pickup_box")
         self.clearance_pairs = []
         for side_geoms, other_geoms, label in (
             (left, right + robot_rest + table + box, "left-vs-rest"),
@@ -267,7 +270,8 @@ class GraspKinematics:
                         worst, label = distance, name
         return worst, label
 
-    def solve_arm_ik(self, side, target_pos, target_rot, q_init=None):
+    def solve_arm_ik(self, side, target_pos, target_rot, q_init=None,
+                     joint_bounds=None):
         """Damped least-squares IK for one 7-DoF arm with restarts."""
         names = ARM_JOINTS[side]
         starts = []
@@ -281,15 +285,19 @@ class GraspKinematics:
         errors = None
         for start in starts:
             try:
-                return self._iterate_arm_ik(side, target_pos, target_rot, start)
+                return self._iterate_arm_ik(
+                    side, target_pos, target_rot, start, joint_bounds=joint_bounds)
             except RuntimeError as error:
                 errors = str(error)
         raise RuntimeError(f"{side} arm IK did not converge: {errors}")
 
-    def _iterate_arm_ik(self, side, target_pos, target_rot, q_init):
+    def _iterate_arm_ik(self, side, target_pos, target_rot, q_init,
+                        joint_bounds=None):
         names = ARM_JOINTS[side]
-        q = np.clip(np.asarray(q_init, dtype=np.float64),
-                    [self.ranges[n][0] for n in names], [self.ranges[n][1] for n in names])
+        joint_bounds = joint_bounds or {}
+        lower = np.array([joint_bounds.get(n, self.ranges[n])[0] for n in names])
+        upper = np.array([joint_bounds.get(n, self.ranges[n])[1] for n in names])
+        q = np.clip(np.asarray(q_init, dtype=np.float64), lower, upper)
         vadr = np.array([self.vadr[n] for n in names])
         jacp = np.zeros((3, self.model.nv))
         jacr = np.zeros((3, self.model.nv))
@@ -324,8 +332,7 @@ class GraspKinematics:
             step = float(np.max(np.abs(dq)))
             if step > IK_STEP_MAX:
                 dq *= IK_STEP_MAX / step
-            q = np.clip(q + dq,
-                        [self.ranges[n][0] for n in names], [self.ranges[n][1] for n in names])
+            q = np.clip(q + dq, lower, upper)
         q = best_q
         for name, value in zip(names, q):
             self.data.qpos[self.qadr[name]] = value

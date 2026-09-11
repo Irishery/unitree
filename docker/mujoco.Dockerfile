@@ -21,6 +21,9 @@ COPY models/walk /ws/models/walk
 RUN python3 /ws/src/g1_mujoco/scripts/prepare_mjcf.py \
       /opt/unitree_ros/robots/g1_description/g1_29dof_with_hand_rev_1_0.xml \
       /opt/unitree_ros/robots/g1_description/g1_29dof_with_dex3_tabletop.xml \
+    && python3 /ws/src/g1_mujoco/scripts/prepare_mjcf.py --box-side-rails \
+      /opt/unitree_ros/robots/g1_description/g1_29dof_with_hand_rev_1_0.xml \
+      /opt/unitree_ros/robots/g1_description/g1_29dof_with_dex3_tabletop_rails.xml \
     && python3 /ws/src/g1_mujoco/scripts/prepare_mjcf.py --scene nav \
       /opt/unitree_ros/robots/g1_description/g1_29dof_with_hand_rev_1_0.xml \
       /opt/unitree_ros/robots/g1_description/g1_29dof_with_dex3_nav.xml \

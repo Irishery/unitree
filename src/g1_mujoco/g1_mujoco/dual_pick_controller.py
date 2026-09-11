@@ -1,5 +1,7 @@
 """ROS executor adapter for the perception-driven bimanual pick sequence."""
 import math
+import os
+from pathlib import Path
 
 import numpy as np
 import rclpy
@@ -9,7 +11,9 @@ from sensor_msgs.msg import JointState
 from std_msgs.msg import Bool, Float64, String
 
 from .bimanual_sequence import SmoothSequence, build_pick_plan
-from .grasp_planning import ARM_JOINTS, BASE_POSE, FINGER_OPEN, GraspKinematics, HAND_JOINTS
+from .grasp_planning import (
+    ARM_JOINTS, BASE_POSE, FINGER_OPEN, GraspKinematics, GraspParams,
+    HAND_JOINTS)
 
 
 class DualPickController(Node):
@@ -19,7 +23,19 @@ class DualPickController(Node):
         super().__init__("g1_dual_pick_controller")
         self.declare_parameter("pose_timeout", 0.75)
         self.declare_parameter("model_z_offset", float(BASE_POSE[2]))
-        self.kinematics = GraspKinematics()
+        self.declare_parameter("box_side_rails", False)
+        self.declare_parameter("box_length", 0.150)
+        self.declare_parameter("box_width", 0.250)
+        self.declare_parameter("box_height", 0.140)
+        description = Path(os.environ.get(
+            "G1_DESCRIPTION_DIR", "/opt/unitree_ros/robots/g1_description"))
+        scene = ("g1_29dof_with_dex3_tabletop_rails.xml"
+                 if bool(self.get_parameter("box_side_rails").value)
+                 else "g1_29dof_with_dex3_tabletop.xml")
+        self.kinematics = GraspKinematics(description / scene)
+        self.grasp_params = GraspParams(box_dims=tuple(float(
+            self.get_parameter(name).value) for name in (
+                "box_length", "box_width", "box_height")))
         self.pose = None
         self.pose_received = None
         self.joints = {}
@@ -67,7 +83,8 @@ class DualPickController(Node):
             centre[2] += float(self.get_parameter("model_z_offset").value)
         yaw = math.atan2(2.0 * (q.w*q.z + q.x*q.y), 1.0 - 2.0 * (q.y*q.y + q.z*q.z))
         try:
-            plan = build_pick_plan(self.kinematics, centre, yaw)
+            plan = build_pick_plan(
+                self.kinematics, centre, yaw, params=self.grasp_params)
         except RuntimeError as error:
             self.failed = f"planning_failed:{error}"
             self.get_logger().error(self.failed)

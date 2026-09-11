@@ -15,6 +15,19 @@ TABLE_THICKNESS_HALF = 0.04
 BOX_LENGTH = 0.255
 BOX_WIDTH = 0.370
 BOX_HEIGHT = 0.090
+RAILED_BOX_LENGTH = 0.150
+RAILED_BOX_WIDTH = 0.250
+RAILED_BOX_HEIGHT = 0.140
+# Optional, visible side rails for a box that has the same physical feature on
+# hardware.  The rail sits directly above the upper straight finger, so a box
+# that starts to slip down is caught by the rail's underside.  It does not
+# constrain the free joint or change contact rules.
+# A 25 mm shelf gives the two nearly straight fingers enough bearing area to
+# support the load with the whole hand.  With the earlier 15 mm shelf the
+# fingers rolled off its outer edge during the 30 second hold.
+BOX_RAIL_PROTRUSION = 0.025
+BOX_RAIL_HEIGHT = 0.016
+BOX_RAIL_CENTER_Z = 0.045
 ROOM_HALF_EXTENT = 3.0
 WALL_THICKNESS = 0.05
 WALL_HEIGHT = 2.5
@@ -56,11 +69,16 @@ def main():
     parser.add_argument("source", type=Path)
     parser.add_argument("destination", type=Path)
     parser.add_argument("--scene", choices=("tabletop", "nav"), default="tabletop")
+    parser.add_argument("--box-side-rails", action="store_true",
+                        help="add two visible physical anti-slip rails to the box side faces")
     args = parser.parse_args()
     table_half_length = TABLETOP_TABLE_HALF_LENGTH if args.scene == "tabletop" else NAV_TABLE_HALF_LENGTH
     table_half_width = TABLETOP_TABLE_HALF_WIDTH if args.scene == "tabletop" else NAV_TABLE_HALF_WIDTH
     table_center_x = TABLETOP_TABLE_CENTER_X if args.scene == "tabletop" else NAV_TABLE_CENTER_X
     physical_tabletop = args.scene == "tabletop"
+    box_length = RAILED_BOX_LENGTH if args.box_side_rails else BOX_LENGTH
+    box_width = RAILED_BOX_WIDTH if args.box_side_rails else BOX_WIDTH
+    box_height = RAILED_BOX_HEIGHT if args.box_side_rails else BOX_HEIGHT
     root = ET.parse(args.source).getroot()
     root.insert(1, ET.Element("option", {"timestep": "0.002", "gravity": "0 0 -9.81", "integrator": "implicitfast"}))
     default = ET.Element("default")
@@ -157,18 +175,35 @@ def main():
                          "contype": "4" if physical_tabletop else "0",
                          "conaffinity": "6" if physical_tabletop else "0",
                          "group": NAV_SCAN_GROUP, "rgba": "0.45 0.25 0.10 1"})
-    box_center_z = TABLE_TOP_HEIGHT + BOX_HEIGHT * 0.5
+    box_center_z = TABLE_TOP_HEIGHT + box_height * 0.5
     box = ET.SubElement(
         world, "body", {"name": "pickup_box", "pos": f"{table_center_x:.3f} 0 {box_center_z:.3f}"})
     ET.SubElement(box, "freejoint", {"name": "pickup_box_free"})
     ET.SubElement(
         box, "geom", {"name": "pickup_box_geom", "type": "box",
-                       "size": f"{BOX_LENGTH * 0.5} {BOX_WIDTH * 0.5} {BOX_HEIGHT * 0.5}",
-                       "mass": "0.25",
+                       "size": f"{box_length * 0.5} {box_width * 0.5} {box_height * 0.5}",
+                       # Two 2.5 g rails keep the complete free body at 0.25 kg.
+                       "mass": "0.245" if args.box_side_rails else "0.25",
                        "contype": "4" if physical_tabletop else "0",
                        "conaffinity": "2" if physical_tabletop else "0",
                        "friction": "1.6 0.03 0.002", "group": NAV_SCAN_GROUP,
                        "rgba": "0.95 0.22 0.05 1"})
+    if args.box_side_rails:
+        for side, sign in (("left", 1.0), ("right", -1.0)):
+            ET.SubElement(box, "geom", {
+                "name": f"pickup_box_{side}_rail",
+                "type": "box",
+                "pos": (f"0 {sign * (box_width * 0.5 + BOX_RAIL_PROTRUSION * 0.5):.4f} "
+                        f"{BOX_RAIL_CENTER_Z:.4f}"),
+                "size": (f"{box_length * 0.5:.4f} {BOX_RAIL_PROTRUSION * 0.5:.4f} "
+                         f"{BOX_RAIL_HEIGHT * 0.5:.4f}"),
+                "mass": "0.0025",
+                "contype": "4" if physical_tabletop else "0",
+                "conaffinity": "2" if physical_tabletop else "0",
+                "friction": "1.6 0.03 0.002",
+                "group": NAV_SCAN_GROUP,
+                "rgba": "0.72 0.10 0.02 1",
+            })
     ET.indent(root, space="  ")
     args.destination.parent.mkdir(parents=True, exist_ok=True)
     ET.ElementTree(root).write(args.destination, encoding="utf-8", xml_declaration=True)

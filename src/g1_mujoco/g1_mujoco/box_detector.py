@@ -32,6 +32,9 @@ class BoxDetector(Node):
         super().__init__("g1_box_detector")
         self.declare_parameter("output_frame", "pelvis")
         self.declare_parameter("max_frame_age", 0.20)
+        self.declare_parameter("box_length", BOX_DIMS[0])
+        self.declare_parameter("box_width", BOX_DIMS[1])
+        self.declare_parameter("box_height", BOX_DIMS[2])
         self.rgb = self.depth = self.info = None
         self.last_yaw = None
         self.tf_buffer = Buffer()
@@ -92,7 +95,9 @@ class BoxDetector(Node):
         q, t = transform.transform.rotation, transform.transform.translation
         points = transform_points(points, quaternion_matrix(q.x, q.y, q.z, q.w),
                                   np.array([t.x, t.y, t.z]))
-        estimate = fit_box_pose(points, yaw_hint=self.last_yaw)
+        dims = tuple(float(self.get_parameter(name).value) for name in (
+            "box_length", "box_width", "box_height"))
+        estimate = fit_box_pose(points, dims=dims, yaw_hint=self.last_yaw)
         if estimate is None:
             self.publish_missing()
             return
@@ -107,7 +112,7 @@ class BoxDetector(Node):
         marker = Marker()
         marker.header, marker.ns, marker.id = pose.header, "detected_box", 0
         marker.type, marker.action, marker.pose = Marker.CUBE, Marker.ADD, pose.pose
-        marker.scale.x, marker.scale.y, marker.scale.z = BOX_DIMS
+        marker.scale.x, marker.scale.y, marker.scale.z = dims
         marker.color.r, marker.color.g, marker.color.b, marker.color.a = 0.1, 1.0, 0.1, 0.45
         self.marker_pub.publish(marker)
 

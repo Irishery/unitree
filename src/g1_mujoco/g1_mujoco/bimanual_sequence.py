@@ -13,6 +13,7 @@ READY = {
     "left": np.array([0.623, 0.886, 0.470, 0.289, -0.415, -0.445, -0.379]),
     "right": np.array([0.623, -0.886, -0.470, 0.289, 0.415, -0.445, 0.379]),
 }
+MIRROR_ARM = np.array([1.0, -1.0, -1.0, 1.0, -1.0, 1.0, -1.0])
 
 
 @dataclass
@@ -32,37 +33,45 @@ def build_pick_plan(kinematics, centre, yaw, params=None):
     """Build DETECT-to-RETREAT waypoints using only an observed box pose."""
     params = params or GraspParams()
     frames = grasp_frames(np.asarray(centre, dtype=float), yaw, params)
-    ingress, descend, slide, straighten, squeeze, front_seat, lift = {}, {}, {}, {}, {}, {}, {}
+    ingress, descend, slide, straighten = {}, {}, {}, {}
+    squeeze, front_seat, lift, hold = {}, {}, {}, {}
     arm = {}
     for side, sign in (("left", 1.0), ("right", -1.0)):
         seed = READY[side]
         start = np.array([0.05, sign * 0.40, 0.95])
         ingress[side] = []
-        for alpha in np.linspace(0.2, 1.0, 5):
+        for index, alpha in enumerate(np.linspace(0.2, 1.0, 5)):
             position = start * (1.0 - alpha) + frames[side]["pregrasp"] * alpha
+            q_init = (MIRROR_ARM * ingress["left"][index]
+                      if side == "right" else seed)
             seed = kinematics.solve_arm_ik(
-                side, position, frames[side]["approach_rotation"], q_init=seed)
+                side, position, frames[side]["approach_rotation"], q_init=q_init)
             ingress[side].append(seed)
         arm.setdefault(side, {})["pregrasp"] = seed
+        q_init = MIRROR_ARM * arm["left"]["hover"] if side == "right" else seed
         seed = kinematics.solve_arm_ik(
-            side, frames[side]["hover"], frames[side]["approach_rotation"], q_init=seed)
+            side, frames[side]["hover"], frames[side]["approach_rotation"], q_init=q_init)
         arm[side]["hover"] = seed
         descend[side] = []
-        for alpha in np.linspace(0.25, 1.0, 4):
+        for index, alpha in enumerate(np.linspace(0.25, 1.0, 4)):
             position = ((1.0 - alpha) * frames[side]["hover"]
                         + alpha * frames[side]["outside_grasp"])
+            q_init = (MIRROR_ARM * descend["left"][index]
+                      if side == "right" else seed)
             seed = kinematics.solve_arm_ik(
-                side, position, frames[side]["approach_rotation"], q_init=seed)
+                side, position, frames[side]["approach_rotation"], q_init=q_init)
             descend[side].append(seed)
         slide[side] = []
-        for alpha in np.linspace(0.125, 1.0, 8):
+        for index, alpha in enumerate(np.linspace(0.125, 1.0, 8)):
             position = ((1.0 - alpha) * frames[side]["outside_grasp"]
                         + alpha * frames[side]["grasp"])
+            q_init = MIRROR_ARM * slide["left"][index] if side == "right" else seed
             seed = kinematics.solve_arm_ik(
-                side, position, frames[side]["approach_rotation"], q_init=seed)
+                side, position, frames[side]["approach_rotation"], q_init=q_init)
             slide[side].append(seed)
+        q_init = MIRROR_ARM * arm["left"]["grasp"] if side == "right" else seed
         final_q = kinematics.solve_arm_ik(
-            side, frames[side]["grasp"], frames[side]["rotation"], q_init=seed)
+            side, frames[side]["grasp"], frames[side]["rotation"], q_init=q_init)
         straighten[side] = [
             (1.0 - alpha) * seed + alpha * final_q
             for alpha in np.linspace(0.25, 1.0, 4)
@@ -70,32 +79,44 @@ def build_pick_plan(kinematics, centre, yaw, params=None):
         arm[side]["grasp"] = straighten[side][-1]
         seed = final_q
         squeeze[side] = []
-        for alpha in np.linspace(0.25, 1.0, 4):
+        for index, alpha in enumerate(np.linspace(0.25, 1.0, 4)):
             position = ((1.0 - alpha) * frames[side]["grasp"]
                         + alpha * frames[side]["clamp"])
+            q_init = MIRROR_ARM * squeeze["left"][index] if side == "right" else seed
             seed = kinematics.solve_arm_ik(
-                side, position, frames[side]["rotation"], q_init=seed)
+                side, position, frames[side]["rotation"], q_init=q_init)
             squeeze[side].append(seed)
         arm[side]["clamp"] = squeeze[side][-1]
         front_seat[side] = []
-        for alpha in np.linspace(0.25, 1.0, 4):
+        for index, alpha in enumerate(np.linspace(0.25, 1.0, 4)):
             position = ((1.0 - alpha) * frames[side]["clamp"]
                         + alpha * frames[side]["carry"])
+            q_init = (MIRROR_ARM * front_seat["left"][index]
+                      if side == "right" else seed)
             seed = kinematics.solve_arm_ik(
-                side, position, frames[side]["rotation"], q_init=seed)
+                side, position, frames[side]["rotation"], q_init=q_init)
             front_seat[side].append(seed)
         arm[side]["carry"] = front_seat[side][-1]
         lift[side] = []
-        for dz in np.linspace(0.04, params.lift_height, 6):
+        elbow = f"{side}_elbow_joint"
+        lift_bounds = {elbow: (params.lift_elbow_min, kinematics.ranges[elbow][1])}
+        for index, dz in enumerate(np.linspace(0.02, params.lift_height, 6)):
             lift_alpha = dz / params.lift_height
             lift_rotation = (rotation_y(math.radians(params.lift_pitch_deg) * lift_alpha)
                              @ frames[side]["rotation"])
+            q_init = MIRROR_ARM * lift["left"][index] if side == "right" else seed
             seed = kinematics.solve_arm_ik(
                 side,
                 frames[side]["carry"]
                 + np.array([params.lift_forward * lift_alpha, 0.0, dz]),
-                lift_rotation, q_init=seed)
+                lift_rotation, q_init=q_init, joint_bounds=lift_bounds)
             lift[side].append(seed)
+        hold_rotation = (rotation_y(math.radians(params.hold_pitch_deg))
+                         @ frames[side]["rotation"])
+        q_init = MIRROR_ARM * hold["left"] if side == "right" else seed
+        hold[side] = kinematics.solve_arm_ik(
+            side, frames[side]["lift"], hold_rotation, q_init=q_init,
+            joint_bounds=lift_bounds)
     opened, closed = _hands(False, params), _hands(True, params)
     segments = [Segment("ready", 2.5, READY, opened)]
     for index in range(5):
@@ -125,8 +146,11 @@ def build_pick_plan(kinematics, centre, yaw, params=None):
         segments.append(Segment(f"lift_{index + 1}", 2.5,
                                 {s: lift[s][index] for s in lift}, closed))
     segments += [
-        Segment("settle", 15.0, {s: lift[s][-1] for s in lift}, closed),
-        Segment("hold", 30.0, {s: lift[s][-1] for s in lift}, closed),
+        Segment("tilt_to_thumb", 4.0, hold, closed),
+        Segment("settle", 15.0, hold, closed),
+        Segment("hold", 30.0, hold, closed),
+        Segment("level_before_place", 4.0,
+                {s: lift[s][-1] for s in lift}, closed),
     ]
     for index in reversed(range(6)):
         target = {s: (lift[s][index - 1] if index else arm[s]["carry"]) for s in lift}

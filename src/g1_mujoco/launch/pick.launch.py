@@ -14,6 +14,10 @@ def generate_launch_description():
         DeclareLaunchArgument("box_x", default_value="0.40"),
         DeclareLaunchArgument("box_y", default_value="0.0"),
         DeclareLaunchArgument("box_yaw", default_value="0.0"),
+        DeclareLaunchArgument("box_side_rails", default_value="true"),
+        DeclareLaunchArgument("box_length", default_value="0.15"),
+        DeclareLaunchArgument("box_width", default_value="0.25"),
+        DeclareLaunchArgument("box_height", default_value="0.14"),
         IncludeLaunchDescription(
             PythonLaunchDescriptionSource(str(sim)),
             launch_arguments={
@@ -25,6 +29,10 @@ def generate_launch_description():
                 "box_x": LaunchConfiguration("box_x"),
                 "box_y": LaunchConfiguration("box_y"),
                 "box_yaw": LaunchConfiguration("box_yaw"),
+                "box_side_rails": LaunchConfiguration("box_side_rails"),
+                "box_length": LaunchConfiguration("box_length"),
+                "box_width": LaunchConfiguration("box_width"),
+                "box_height": LaunchConfiguration("box_height"),
             }.items(),
         ),
     ])

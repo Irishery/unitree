@@ -167,16 +167,18 @@ class G1Mujoco(Node):
         self.declare_parameter("box_x", 0.40)
         self.declare_parameter("box_y", 0.0)
         self.declare_parameter("box_yaw", 0.0)
+        self.declare_parameter("box_side_rails", False)
         self.tabletop_pick = bool(self.get_parameter("tabletop_pick").value)
         self.walk = bool(self.get_parameter("walk").value)
         self.viewer_lite = bool(self.get_parameter("viewer_lite").value)
         if self.walk and self.tabletop_pick:
             raise RuntimeError("walk:=true and tabletop_pick:=true are mutually exclusive")
-        scene_file = (
-            "g1_29dof_with_dex3_tabletop.xml"
-            if self.tabletop_pick
-            else "g1_29dof_with_dex3_nav.xml"
-        )
+        if self.tabletop_pick:
+            scene_file = ("g1_29dof_with_dex3_tabletop_rails.xml"
+                          if bool(self.get_parameter("box_side_rails").value)
+                          else "g1_29dof_with_dex3_tabletop.xml")
+        else:
+            scene_file = "g1_29dof_with_dex3_nav.xml"
         description = Path(os.environ.get("G1_DESCRIPTION_DIR", "/opt/unitree_ros/robots/g1_description"))
         scene_path = str(description / scene_file)
         temporary_scene_paths = []
@@ -236,9 +238,10 @@ class G1Mujoco(Node):
         if self.tabletop_pick and self.box_joint_id >= 0:
             qadr = int(self.model.jnt_qposadr[self.box_joint_id])
             yaw = float(self.get_parameter("box_yaw").value)
+            box_z = float(self.data.qpos[qadr + 2])
             self.data.qpos[qadr:qadr + 7] = [
                 float(self.get_parameter("box_x").value),
-                float(self.get_parameter("box_y").value), 0.800,
+                float(self.get_parameter("box_y").value), box_z,
                 *yaw_to_mujoco_quaternion(yaw),
             ]
         if self.walk:
