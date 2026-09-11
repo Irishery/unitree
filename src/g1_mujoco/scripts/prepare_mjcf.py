@@ -1,12 +1,22 @@
 #!/usr/bin/env python3
 """Add a contact-only tabletop scene to Unitree's official G1+DEx3 MJCF."""
 import argparse
+import math
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
 TABLETOP_TABLE_HALF_LENGTH = 0.30
 TABLETOP_TABLE_HALF_WIDTH = 0.70
 TABLETOP_TABLE_CENTER_X = 0.15 + TABLETOP_TABLE_HALF_LENGTH
+# Second tabletop immediately to the robot's right (negative Y), flush with the
+# main table's right edge and at the same height.  It is a separate static body
+# so the manipulation scene has a second work surface without touching the
+# validated centred grasp on the main table.
+# Same slab dimensions as the main table (0.60 x 1.40 m), only rotated.
+SIDE_TABLE_HALF_LENGTH = TABLETOP_TABLE_HALF_LENGTH
+SIDE_TABLE_HALF_WIDTH = TABLETOP_TABLE_HALF_WIDTH
+SIDE_TABLE_GAP = 0.005
+SIDE_TABLE_YAW_DEG = 90.0
 NAV_TABLE_HALF_LENGTH = 0.18
 NAV_TABLE_HALF_WIDTH = 0.35
 NAV_TABLE_CENTER_X = 0.95
@@ -175,6 +185,34 @@ def main():
                          "contype": "4" if physical_tabletop else "0",
                          "conaffinity": "6" if physical_tabletop else "0",
                          "group": NAV_SCAN_GROUP, "rgba": "0.45 0.25 0.10 1"})
+    if physical_tabletop:
+        # The side table is rotated about Z (default 90 deg, i.e. turned
+        # sideways), so its axis-aligned Y extent changes.  Recompute the
+        # effective half extents to keep it flush with the main table's right
+        # edge (y = -TABLETOP_TABLE_HALF_WIDTH) without overlapping it.
+        yaw = math.radians(SIDE_TABLE_YAW_DEG)
+        cos_yaw, sin_yaw = abs(math.cos(yaw)), abs(math.sin(yaw))
+        side_half_x = (SIDE_TABLE_HALF_LENGTH * cos_yaw
+                       + SIDE_TABLE_HALF_WIDTH * sin_yaw)
+        side_half_y = (SIDE_TABLE_HALF_LENGTH * sin_yaw
+                       + SIDE_TABLE_HALF_WIDTH * cos_yaw)
+        side_table_center_y = -(TABLETOP_TABLE_HALF_WIDTH + SIDE_TABLE_GAP + side_half_y)
+        # Align the far edges of both tables on one line (x = main far edge)
+        # so the side table extends backwards beside the robot and the two
+        # tops form a clean right angle instead of crossing in the middle.
+        main_far_edge_x = TABLETOP_TABLE_CENTER_X + TABLETOP_TABLE_HALF_LENGTH
+        side_table_center_x = main_far_edge_x - side_half_x
+        half_angle = yaw * 0.5
+        side_table = ET.SubElement(world, "body", {
+            "name": "side_table",
+            "pos": f"{side_table_center_x:.3f} {side_table_center_y:.3f} {table_center_z:.3f}",
+            "quat": f"{math.cos(half_angle):.6f} 0 0 {math.sin(half_angle):.6f}"})
+        ET.SubElement(side_table, "geom", {
+            "name": "side_table_top", "type": "box",
+            "size": f"{SIDE_TABLE_HALF_LENGTH} {SIDE_TABLE_HALF_WIDTH} {TABLE_THICKNESS_HALF}",
+            "mass": "25",
+            "contype": "4", "conaffinity": "6",
+            "group": NAV_SCAN_GROUP, "rgba": "0.52 0.30 0.13 1"})
     box_center_z = TABLE_TOP_HEIGHT + box_height * 0.5
     box = ET.SubElement(
         world, "body", {"name": "pickup_box", "pos": f"{table_center_x:.3f} 0 {box_center_z:.3f}"})
@@ -204,6 +242,22 @@ def main():
                 "group": NAV_SCAN_GROUP,
                 "rgba": "0.72 0.10 0.02 1",
             })
+    # The box is held by the palms and fingers.  The wrist links sit just
+    # behind the palm; when the arm carries the box they can graze it and,
+    # with the stiff default contacts, wedge and eject the free body.  Exclude
+    # only the box<->wrist pairs; the grasp contacts on the palm and fingers
+    # are untouched and the box stays a fully free body.
+    contact = root.find("contact")
+    if contact is None:
+        contact = ET.Element("contact")
+        root.insert(list(root).index(world) + 1, contact)
+    for side in ("left", "right"):
+        for part in ("wrist_roll", "wrist_pitch", "wrist_yaw"):
+            name = f"{side}_{part}_link"
+            if any(existing.get("body2") == name and existing.get("body1") == "pickup_box"
+                   for existing in contact.findall("exclude")):
+                continue
+            ET.SubElement(contact, "exclude", {"body1": "pickup_box", "body2": name})
     ET.indent(root, space="  ")
     args.destination.parent.mkdir(parents=True, exist_ok=True)
     ET.ElementTree(root).write(args.destination, encoding="utf-8", xml_declaration=True)

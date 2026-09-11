@@ -1,5 +1,5 @@
 """Simulator-independent bimanual pick sequence and smooth joint timing."""
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import math
 
 import numpy as np
@@ -22,6 +22,7 @@ class Segment:
     duration: float
     arms: dict
     hands: dict
+    transport: bool = False
 
 
 def _hands(closed, params):
@@ -29,8 +30,14 @@ def _hands(closed, params):
                    if closed else FINGER_OPEN[side].copy()) for side in ("left", "right")}
 
 
-def build_pick_plan(kinematics, centre, yaw, params=None):
-    """Build DETECT-to-RETREAT waypoints using only an observed box pose."""
+def build_pick_plan(kinematics, centre, yaw, params=None, transport=False):
+    """Build DETECT-to-RETREAT waypoints using only an observed box pose.
+
+    With ``transport=True`` the long stationary hold is replaced by a
+    controller-driven base transport segment (the arms stay in the hold pose
+    while the mobile base carries the box to the second table), after which the
+    normal level/place/release tail runs at the new base location.
+    """
     params = params or GraspParams()
     frames = grasp_frames(np.asarray(centre, dtype=float), yaw, params)
     ingress, descend, slide, straighten = {}, {}, {}, {}
@@ -145,13 +152,45 @@ def build_pick_plan(kinematics, centre, yaw, params=None):
     for index in range(6):
         segments.append(Segment(f"lift_{index + 1}", 2.5,
                                 {s: lift[s][index] for s in lift}, closed))
-    segments += [
-        Segment("tilt_to_thumb", 4.0, hold, closed),
-        Segment("settle", 15.0, hold, closed),
-        Segment("hold", 30.0, hold, closed),
-        Segment("level_before_place", 4.0,
-                {s: lift[s][-1] for s in lift}, closed),
-    ]
+    segments.append(Segment("tilt_to_thumb", 4.0, hold, closed))
+    if transport:
+        # Firm the grasp for the carry only: pull the wrists a little further
+        # inward and close the side fingers harder.  The pick/place grasp
+        # geometry itself is untouched.  A joint-space guard falls back to the
+        # validated hold pose if the small re-seat ever picks another IK branch.
+        carry_params = replace(params, arm_preload=params.arm_preload + params.transport_squeeze)
+        carry_frames = grasp_frames(np.asarray(centre, dtype=float), yaw, carry_params)
+        carry_hold = {}
+        for side in ("left", "right"):
+            elbow = f"{side}_elbow_joint"
+            bounds = {elbow: (params.lift_elbow_min, kinematics.ranges[elbow][1])}
+            carry_rotation = (rotation_y(math.radians(params.transport_pitch_deg))
+                              @ frames[side]["rotation"])
+            q_init = MIRROR_ARM * carry_hold["left"] if side == "right" else hold[side]
+            try:
+                candidate = kinematics.solve_arm_ik(
+                    side, carry_frames[side]["lift"], carry_rotation,
+                    q_init=q_init, joint_bounds=bounds)
+                if np.max(np.abs(candidate - hold[side])) > 0.5:
+                    candidate = hold[side]
+            except RuntimeError:
+                candidate = hold[side]
+            carry_hold[side] = candidate
+        carry_hands = {side: finger_targets(
+            side, params.finger_close_scale * params.transport_finger_scale, params)
+            for side in ("left", "right")}
+        segments.append(Segment("carry_squeeze", 1.5, carry_hold, carry_hands))
+        # The controller owns the base while this segment is active and holds
+        # the arms in the grip pose; the huge duration only prevents the
+        # time-based sampler from advancing before the drive is finished.
+        segments.append(Segment("transport", 1.0e9, carry_hold, carry_hands, transport=True))
+    else:
+        segments += [
+            Segment("settle", 15.0, hold, closed),
+            Segment("hold", 30.0, hold, closed),
+        ]
+    segments.append(Segment("level_before_place", 4.0,
+                            {s: lift[s][-1] for s in lift}, closed))
     for index in reversed(range(6)):
         target = {s: (lift[s][index - 1] if index else arm[s]["carry"]) for s in lift}
         segments.append(Segment(f"place_{6 - index}", 0.9, target, closed))
@@ -187,6 +226,22 @@ class SmoothSequence:
     @property
     def stage(self):
         return "done" if self.done else self.segments[self.index].name
+
+    @property
+    def current_segment(self):
+        return None if self.done else self.segments[self.index]
+
+    def advance(self, now):
+        """Force-complete the current segment and move to the next one."""
+        if self.done:
+            return
+        segment = self.segments[self.index]
+        self.current_arms = {s: np.asarray(v, float).copy() for s, v in segment.arms.items()}
+        self.current_hands = {s: np.asarray(v, float).copy() for s, v in segment.hands.items()}
+        self.start_arms = {s: v.copy() for s, v in self.current_arms.items()}
+        self.start_hands = {s: v.copy() for s, v in self.current_hands.items()}
+        self.index += 1
+        self.started = now
 
     def _duration(self, segment):
         delta = max(np.max(np.abs(segment.arms[s] - self.start_arms[s])) for s in segment.arms)

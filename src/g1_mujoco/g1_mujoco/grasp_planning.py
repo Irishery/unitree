@@ -6,7 +6,7 @@ collision-distance queries.  A hardware deployment swaps this class for a
 URDF-based kinematics provider with the same interface; the scenario logic in
 dual_pick_controller.py never touches simulator signals directly.
 """
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 import os
 import math
@@ -156,6 +156,12 @@ class GraspParams:
     lift_elbow_min: float = 0.0          # do not reverse the elbow branch during carrying
     hold_pitch_deg: float = -15.0        # lean toward the robot and load the straight thumbs
     finger_close_scale: float = 1.0
+    # Extra squeeze used only while the base carries the box between tables.
+    # The stationary grasp is unchanged; a small inward preload and firmer
+    # fingers keep the box from rotating out of the grip during transport.
+    transport_squeeze: float = 0.0
+    transport_finger_scale: float = 1.0
+    transport_pitch_deg: float = -15.0  # validated carry tilt (wrist contacts excluded)
 
 
 class GraspKinematics:

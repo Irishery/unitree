@@ -235,6 +235,9 @@ class G1Mujoco(Node):
             self.model, mujoco.mjtObj.mjOBJ_JOINT, "pickup_box_free")
         self.box_body_id = mujoco.mj_name2id(
             self.model, mujoco.mjtObj.mjOBJ_BODY, "pickup_box")
+        self.box_dofadr = (int(self.model.jnt_dofadr[self.box_joint_id])
+                           if self.box_joint_id >= 0 else None)
+        self.last_box_log_time = 0.0
         if self.tabletop_pick and self.box_joint_id >= 0:
             qadr = int(self.model.jnt_qposadr[self.box_joint_id])
             yaw = float(self.get_parameter("box_yaw").value)
@@ -258,9 +261,13 @@ class G1Mujoco(Node):
         self.base_y = 0.0
         self.base_yaw = 0.0
         self.cmd_vel = Twist()
+        # odom_vx/vy are expressed in the base frame (Nav2 twist convention),
+        # while the MuJoCo free-joint qvel must be in the world frame.
         self.odom_vx = 0.0
         self.odom_vy = 0.0
         self.odom_wz = 0.0
+        self.odom_world_vx = 0.0
+        self.odom_world_vy = 0.0
         self.last_cmd_time = self.get_clock().now()
         self.last_final_cmd_time = None
         self.last_smoothed_cmd_time = None
@@ -278,6 +285,12 @@ class G1Mujoco(Node):
         self.publisher = self.create_publisher(JointState, "/g1/joint_states", 10)
         self.contacts_pub = self.create_publisher(Int32, "/g1/mujoco/hand_box_contacts", 10)
         self.grasp_pub = self.create_publisher(Bool, "/g1/mujoco/physical_grasp", 10)
+        # Perception only needs the RGB-D stream until a pick is planned.  The
+        # controller turns rendering off with this topic so the contact
+        # simulation runs at full speed during the (long) manipulation motion.
+        self.camera_enabled = True
+        self.create_subscription(Bool, "/g1/mujoco/camera_enable",
+                                 self.set_camera_enabled, 10)
         self.box_truth_pub = self.create_publisher(
             PoseStamped, "/g1/mujoco/evaluation/box_ground_truth", 10)
         self.odom_pub = self.create_publisher(Odometry, "/odom", 10)
@@ -355,6 +368,9 @@ class G1Mujoco(Node):
         if name in self.target and abs(value) < 10.0:
             rng = self.model.jnt_range[self.joint_ids[name]]
             self.target[name] = max(float(rng[0]), min(float(rng[1]), value))
+
+    def set_camera_enabled(self, message):
+        self.camera_enabled = bool(message.data)
 
     def set_hand(self, names, message):
         if len(message.position) != 7:
@@ -809,6 +825,25 @@ class G1Mujoco(Node):
             self.apply_base_pose()
         mujoco.mj_forward(self.model, self.data)
         self.step_count += 1
+        if self.tabletop_pick and self.box_dofadr is not None:
+            speed = float(np.linalg.norm(
+                self.data.qvel[self.box_dofadr:self.box_dofadr + 3]))
+            if speed > 2.0:
+                now_sec = self.get_clock().now().nanoseconds * 1e-9
+                if now_sec - self.last_box_log_time > 0.5:
+                    self.last_box_log_time = now_sec
+                    pairs = []
+                    for index in range(self.data.ncon):
+                        contact = self.data.contact[index]
+                        bodies = [mujoco.mj_id2name(
+                            self.model, mujoco.mjtObj.mjOBJ_BODY,
+                            self.model.geom_bodyid[geom]) or ""
+                            for geom in (contact.geom1, contact.geom2)]
+                        if "pickup_box" in bodies:
+                            pairs.append((bodies[0], bodies[1], round(float(contact.dist), 4)))
+                    self.get_logger().warn(
+                        f"box speed {speed:.1f} m/s at {self.data.xpos[self.box_body_id].round(3).tolist()} "
+                        f"base=({self.base_x:.3f},{self.base_y:.3f},{self.base_yaw:.2f}) contacts={pairs[:8]}")
         if self.walk and self.step_count % WALK_CONTROL_DECIMATION == 0:
             if self.walk_should_static_stand():
                 self.static_stand_walk()
@@ -831,7 +866,7 @@ class G1Mujoco(Node):
             self.publish_state(stamp)
             self.publish_scan(stamp)
             self.publish_mid360_points(stamp)
-        if self.renderer is not None and self.step_count % 17 == 0:
+        if self.renderer is not None and self.camera_enabled and self.step_count % 17 == 0:
             self.publish_camera()
         if self.viewer is not None and self.step_count % 10 == 0:
             self.viewer.sync()
@@ -874,6 +909,8 @@ class G1Mujoco(Node):
         actual_dy = self.base_y - old_y
         self.odom_vx = (actual_dx * cos_yaw + actual_dy * sin_yaw) / dt
         self.odom_vy = (-actual_dx * sin_yaw + actual_dy * cos_yaw) / dt
+        self.odom_world_vx = actual_dx / dt
+        self.odom_world_vy = actual_dy / dt
         self.odom_wz = wz
 
     def apply_base_pose(self):
@@ -889,8 +926,8 @@ class G1Mujoco(Node):
         qpos[self.base_qposadr + 4] = qx
         qpos[self.base_qposadr + 5] = qy
         qpos[self.base_qposadr + 6] = qz
-        qvel[self.base_qveladr + 0] = self.odom_vx
-        qvel[self.base_qveladr + 1] = self.odom_vy
+        qvel[self.base_qveladr + 0] = self.odom_world_vx
+        qvel[self.base_qveladr + 1] = self.odom_world_vy
         qvel[self.base_qveladr + 2] = 0.0
         qvel[self.base_qveladr + 3] = 0.0
         qvel[self.base_qveladr + 4] = 0.0
