@@ -101,6 +101,14 @@ class BoxDetector(Node):
         if estimate is None:
             self.publish_missing()
             return
+        # The footprint fit leaves a 180 degree yaw ambiguity.  The planner
+        # presses the near short face, so choose the branch whose short axis
+        # points from the robot (pelvis origin) towards the box.  Flipping the
+        # yaw by pi keeps the same centre because both in-plane axes flip.
+        centre = estimate["centre"]
+        short = estimate["short_axis"]
+        if short[0] * centre[0] + short[1] * centre[1] < 0.0:
+            estimate["yaw"] += math.pi
         self.last_yaw = estimate["yaw"]
         pose = PoseStamped()
         pose.header.stamp, pose.header.frame_id = rgb_msg.header.stamp, output_frame

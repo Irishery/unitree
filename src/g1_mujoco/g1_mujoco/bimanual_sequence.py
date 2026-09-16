@@ -124,6 +124,26 @@ def build_pick_plan(kinematics, centre, yaw, params=None, transport=False):
         hold[side] = kinematics.solve_arm_ik(
             side, frames[side]["lift"], hold_rotation, q_init=q_init,
             joint_bounds=lift_bounds)
+    # Controlled placement: keep the carry tilt while the box descends and
+    # level it only once it rests on the table.  Rotating the free box in
+    # mid-air let it swing out of the compliant grip and land on its side.
+    place = {side: [] for side in ("left", "right")}
+    for side in ("left", "right"):
+        elbow = f"{side}_elbow_joint"
+        place_bounds = {elbow: (params.lift_elbow_min, kinematics.ranges[elbow][1])}
+        seed = hold[side]
+        for index in range(6):
+            alpha = 1.0 - (index + 1) / 6.0
+            place_rotation = (rotation_y(math.radians(params.hold_pitch_deg * alpha))
+                              @ frames[side]["rotation"])
+            q_init = MIRROR_ARM * place["left"][index] if side == "right" else seed
+            seed = kinematics.solve_arm_ik(
+                side,
+                frames[side]["carry"]
+                + np.array([params.lift_forward * alpha, 0.0,
+                            params.lift_height * alpha]),
+                place_rotation, q_init=q_init, joint_bounds=place_bounds)
+            place[side].append(seed)
     opened, closed = _hands(False, params), _hands(True, params)
     segments = [Segment("ready", 2.5, READY, opened)]
     for index in range(5):
@@ -158,28 +178,41 @@ def build_pick_plan(kinematics, centre, yaw, params=None, transport=False):
         # inward and close the side fingers harder.  The pick/place grasp
         # geometry itself is untouched.  A joint-space guard falls back to the
         # validated hold pose if the small re-seat ever picks another IK branch.
-        carry_params = replace(params, arm_preload=params.arm_preload + params.transport_squeeze)
-        carry_frames = grasp_frames(np.asarray(centre, dtype=float), yaw, carry_params)
-        carry_hold = {}
-        for side in ("left", "right"):
-            elbow = f"{side}_elbow_joint"
-            bounds = {elbow: (params.lift_elbow_min, kinematics.ranges[elbow][1])}
-            carry_rotation = (rotation_y(math.radians(params.transport_pitch_deg))
-                              @ frames[side]["rotation"])
-            q_init = MIRROR_ARM * carry_hold["left"] if side == "right" else hold[side]
-            try:
-                candidate = kinematics.solve_arm_ik(
-                    side, carry_frames[side]["lift"], carry_rotation,
-                    q_init=q_init, joint_bounds=bounds)
-                if np.max(np.abs(candidate - hold[side])) > 0.5:
+        same_carry_pose = (
+            abs(params.transport_squeeze) <= 1e-9
+            and abs(params.transport_pitch_deg - params.hold_pitch_deg) <= 1e-9
+        )
+        if same_carry_pose:
+            # Preserve the exact loaded joint solution.  Resolving an identical
+            # Cartesian target can still move a redundant 7-DoF arm enough to
+            # disturb a frictional grasp.
+            carry_hold = {side: hold[side].copy() for side in ("left", "right")}
+        else:
+            carry_params = replace(
+                params, arm_preload=params.arm_preload + params.transport_squeeze)
+            carry_frames = grasp_frames(np.asarray(centre, dtype=float), yaw, carry_params)
+            carry_hold = {}
+            for side in ("left", "right"):
+                elbow = f"{side}_elbow_joint"
+                bounds = {elbow: (params.lift_elbow_min, kinematics.ranges[elbow][1])}
+                carry_rotation = (rotation_y(math.radians(params.transport_pitch_deg))
+                                  @ frames[side]["rotation"])
+                q_init = MIRROR_ARM * carry_hold["left"] if side == "right" else hold[side]
+                try:
+                    candidate = kinematics.solve_arm_ik(
+                        side, carry_frames[side]["lift"], carry_rotation,
+                        q_init=q_init, joint_bounds=bounds)
+                    if np.max(np.abs(candidate - hold[side])) > 0.5:
+                        candidate = hold[side]
+                except RuntimeError:
                     candidate = hold[side]
-            except RuntimeError:
-                candidate = hold[side]
-            carry_hold[side] = candidate
+                carry_hold[side] = candidate
         carry_hands = {side: finger_targets(
             side, params.finger_close_scale * params.transport_finger_scale, params)
             for side in ("left", "right")}
-        segments.append(Segment("carry_squeeze", 1.5, carry_hold, carry_hands))
+        # Firm re-grip and a short standstill before the base starts moving, so
+        # the locomotion gait does not engage while the box is still settling.
+        segments.append(Segment("carry_squeeze", 3.0, carry_hold, carry_hands))
         # The controller owns the base while this segment is active and holds
         # the arms in the grip pose; the huge duration only prevents the
         # time-based sampler from advancing before the drive is finished.
@@ -189,17 +222,18 @@ def build_pick_plan(kinematics, centre, yaw, params=None, transport=False):
             Segment("settle", 15.0, hold, closed),
             Segment("hold", 30.0, hold, closed),
         ]
-    segments.append(Segment("level_before_place", 4.0,
-                            {s: lift[s][-1] for s in lift}, closed))
-    for index in reversed(range(6)):
-        target = {s: (lift[s][index - 1] if index else arm[s]["carry"]) for s in lift}
-        segments.append(Segment(f"place_{6 - index}", 0.9, target, closed))
+    # Hold the carry tilt for a short settle, then descend with the tilt and
+    # level the box on the table (place_6 is the level carry pose).
+    segments.append(Segment("level_before_place", 2.0, hold, closed))
+    for index in range(6):
+        segments.append(Segment(f"place_{index + 1}", 1.1,
+                                {s: place[s][index] for s in place}, closed))
     # Returning to the original grasp pose already seats the box on the table.
     # Driving the wrists lower would scrape the straight fingers along it.
     lower = {side: arm[side]["carry"] for side in ("left", "right")}
     segments += [
-        Segment("seat", 2.0, lower, closed),
-        Segment("release", 1.5, lower, opened),
+        Segment("seat", 3.0, lower, closed),
+        Segment("release", 2.5, lower, opened),
         Segment("retreat", 1.5, {s: arm[s]["pregrasp"] for s in arm}, opened),
         Segment("ready_after", 2.5, READY, opened),
     ]

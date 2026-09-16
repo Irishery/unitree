@@ -21,6 +21,8 @@ Environment:
     G1_TRIAL_OUT      output directory (default /ws/src/g1_mujoco/artifacts/integration)
     G1_TRIAL_CAPTURE  comma-separated stages that get a screenshot
     G1_MUJOCO_MODEL   scene XML used for the screenshots (default railed tabletop)
+    G1_TRIAL_DETAIL_STAGES stages recorded periodically for close inspection
+    G1_TRIAL_TRANSPORT_SHOT_INTERVAL seconds between periodic screenshots
 """
 import csv
 import json
@@ -56,9 +58,23 @@ CAPTURE = set(os.environ.get("G1_TRIAL_CAPTURE", (
     "ready,hover,close,whole_hand_clamp_4,lift_6,tilt_to_thumb,carry_squeeze,"
     "hold,level_before_place,place_2,place_4,seat,release,ready_after")).split(","))
 TRANSPORT_SHOT_INTERVAL = float(os.environ.get("G1_TRIAL_TRANSPORT_SHOT_INTERVAL", "2.5"))
+DETAIL_STAGES = set(os.environ.get(
+    "G1_TRIAL_DETAIL_STAGES", "carry_squeeze,transport").split(","))
+# Arm joints whose commanded target, actual state, tracking error and applied
+# torque are logged every tick.  The names cover the whole 7-DoF arm so a gait
+# disturbance can be traced to a specific joint.
+ARM_DIAG_JOINTS = [
+    "left_shoulder_pitch_joint", "left_shoulder_roll_joint", "left_shoulder_yaw_joint",
+    "left_elbow_joint", "left_wrist_roll_joint", "left_wrist_pitch_joint", "left_wrist_yaw_joint",
+    "right_shoulder_pitch_joint", "right_shoulder_roll_joint", "right_shoulder_yaw_joint",
+    "right_elbow_joint", "right_wrist_roll_joint", "right_wrist_pitch_joint", "right_wrist_yaw_joint",
+]
 TABLE_TOP_Z = 0.755
 STARTUP_TIMEOUT = 60.0
 RUN_TIMEOUT = float(os.environ.get("G1_TRIAL_RUN_TIMEOUT", "260.0"))
+# Number of pick/place cycles the controller is expected to run.  0 means the
+# controller loops forever, so the harness only stops on the run timeout.
+EXPECTED_CYCLES = int(os.environ.get("G1_TRIAL_CYCLES", "1"))
 
 
 def quaternion_matrix(x, y, z, w):
@@ -101,18 +117,34 @@ class ThirdPersonRecorder:
                     self.joint_qadr[name] = int(self.model.jnt_qposadr[jid])
         self.box_qadr = int(self.model.jnt_qposadr[mujoco.mj_name2id(
             self.model, mujoco.mjtObj.mjOBJ_JOINT, "pickup_box_free")])
+        self.box_body_id = mujoco.mj_name2id(
+            self.model, mujoco.mjtObj.mjOBJ_BODY, "pickup_box")
         self.base_qadr = int(self.model.jnt_qposadr[mujoco.mj_name2id(
             self.model, mujoco.mjtObj.mjOBJ_JOINT, "floating_base_joint")])
+        diagnostic_bodies = (
+            "left_wrist_yaw_link", "right_wrist_yaw_link",
+            "left_hand_index_0_link", "left_hand_middle_0_link",
+            "right_hand_index_0_link", "right_hand_middle_0_link",
+        )
+        self.body_ids = {
+            name: mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_BODY, name)
+            for name in diagnostic_bodies
+        }
         self.qpos = np.array(self.data.qpos)
         self.qpos[self.base_qadr:self.base_qadr + 7] = [0.0, 0.0, 0.793, 1.0, 0.0, 0.0, 0.0]
         self.ready = False
+        self.follow_box = os.environ.get("G1_TRIAL_CAM_FOLLOW", "0") == "1"
+        self.follow_offset = [float(v) for v in os.environ.get(
+            "G1_TRIAL_CAM_FOLLOW_OFFSET", "0.0,0.10,0.05").split(",")]
+        self.box_position = None
         # Wide third-person view that keeps both tables and the whole carry
-        # path in frame, so the walk to the second table is visible.
+        # path in frame.  Override via G1_TRIAL_CAM_* for a close-up review.
         self.camera = mujoco.MjvCamera()
-        self.camera.lookat = [0.10, -0.45, 0.85]
-        self.camera.distance = 2.9
-        self.camera.elevation = -35.0
-        self.camera.azimuth = 135.0
+        self.camera.lookat = [float(v) for v in os.environ.get(
+            "G1_TRIAL_CAM_LOOKAT", "0.10,-0.45,0.85").split(",")]
+        self.camera.distance = float(os.environ.get("G1_TRIAL_CAM_DISTANCE", "2.9"))
+        self.camera.elevation = float(os.environ.get("G1_TRIAL_CAM_ELEVATION", "-35"))
+        self.camera.azimuth = float(os.environ.get("G1_TRIAL_CAM_AZIMUTH", "135"))
         self.width, self.height = 640, 480
         self.renderer = mujoco.Renderer(self.model, width=self.width, height=self.height)
         self.count = 0
@@ -128,16 +160,69 @@ class ThirdPersonRecorder:
             q = box_pose.pose.orientation
             self.qpos[self.box_qadr:self.box_qadr + 3] = [p.x, p.y, p.z]
             self.qpos[self.box_qadr + 3:self.box_qadr + 7] = [q.w, q.x, q.y, q.z]
+            self.box_position = np.array([p.x, p.y, p.z])
             self.box_ready = True
         if base_pose is not None:
-            half = 0.5 * base_pose[2]
-            self.qpos[self.base_qadr:self.base_qadr + 7] = [
-                base_pose[0], base_pose[1], 0.793, math.cos(half), 0.0, 0.0, math.sin(half)]
+            self.qpos[self.base_qadr:self.base_qadr + 7] = base_pose
         self.ready = joints is not None and box_pose is not None
+
+    def diagnostics(self):
+        """Return contact and box-to-hand offsets from the reconstructed pose."""
+        if not self.ready:
+            return {}
+        self.data.qpos[:] = self.qpos
+        self.mujoco.mj_forward(self.model, self.data)
+        wrist_z = np.mean([
+            self.data.xpos[self.body_ids[name], 2]
+            for name in ("left_wrist_yaw_link", "right_wrist_yaw_link")])
+        finger_z = np.mean([
+            self.data.xpos[self.body_ids[name], 2]
+            for name in (
+                "left_hand_index_0_link", "left_hand_middle_0_link",
+                "right_hand_index_0_link", "right_hand_middle_0_link")])
+        box_pos = self.data.xpos[self.box_body_id]
+        box_rot = self.data.xmat[self.box_body_id].reshape(3, 3)
+        counts = {key: 0 for key in (
+            "main", "rail", "thumb", "index", "middle")}
+        distances = []
+        local_heights = []
+        for index in range(self.data.ncon):
+            contact = self.data.contact[index]
+            geom_ids = (contact.geom1, contact.geom2)
+            body_names = [self.mujoco.mj_id2name(
+                self.model, self.mujoco.mjtObj.mjOBJ_BODY,
+                self.model.geom_bodyid[geom]) or "" for geom in geom_ids]
+            if "pickup_box" not in body_names or not any(
+                    "_hand_" in name for name in body_names):
+                continue
+            geom_names = [self.mujoco.mj_id2name(
+                self.model, self.mujoco.mjtObj.mjOBJ_GEOM, geom) or ""
+                for geom in geom_ids]
+            box_geom = next(name for name in geom_names if name.startswith("pickup_box"))
+            hand_body = next(name for name in body_names if "_hand_" in name)
+            counts["rail" if "rail" in box_geom else "main"] += 1
+            for part in ("thumb", "index", "middle"):
+                if part in hand_body:
+                    counts[part] += 1
+            distances.append(float(contact.dist))
+            local_heights.append(float((box_rot.T @ (contact.pos - box_pos))[2]))
+        return {
+            "box_wrist_dz": float(box_pos[2] - wrist_z),
+            "box_finger_dz": float(box_pos[2] - finger_z),
+            "contact_main": counts["main"],
+            "contact_rail": counts["rail"],
+            "contact_thumb": counts["thumb"],
+            "contact_index": counts["index"],
+            "contact_middle": counts["middle"],
+            "contact_min_dist": min(distances, default=0.0),
+            "contact_local_z_mean": float(np.mean(local_heights)) if local_heights else 0.0,
+        }
 
     def snapshot(self, label):
         if not self.ready:
             return None
+        if self.follow_box and self.box_position is not None:
+            self.camera.lookat = (self.box_position + np.array(self.follow_offset)).tolist()
         self.data.qpos[:] = self.qpos
         self.mujoco.mj_forward(self.model, self.data)
         self.renderer.update_scene(self.data, camera=self.camera)
@@ -163,7 +248,10 @@ class IntegrationTrial(Node):
         self.create_subscription(Bool, "/g1/mujoco/physical_grasp", self.on_grasp, 10)
         self.create_subscription(PoseStamped, "/g1/mujoco/evaluation/box_ground_truth",
                                  self.on_ground_truth, 10)
+        self.create_subscription(PoseStamped, "/g1/mujoco/evaluation/base_ground_truth",
+                                 self.on_base_truth, 10)
         self.create_subscription(JointState, "/g1/joint_states", self.on_joints, 10)
+        self.create_subscription(JointState, "/g1/joint_targets", self.on_targets, 10)
         self.create_subscription(Odometry, "/odom", self.on_odom, 10)
 
         self.state = "WAIT_DETECT"
@@ -181,11 +269,18 @@ class IntegrationTrial(Node):
         self.contacts_max = 0
         self.grasp = False
         self.joints = {}
+        self.joint_vel = {}
+        self.targets = {}
+        self.efforts = {}
         self.gt = None
         self.base_odom = None
+        self.base_render_pose = None
+        self.base_truth_pose = None
         self.finished_wall = None
         self.next_transport_shot = 0.0
         self.transport_shots = 0
+        self.cycles_completed = 0
+        self.republish_start_until = 0.0
 
         self.recorder = None
         try:
@@ -199,6 +294,11 @@ class IntegrationTrial(Node):
 
     def on_joints(self, message):
         self.joints = dict(zip(message.name, message.position))
+        self.joint_vel = dict(zip(message.name, message.velocity))
+
+    def on_targets(self, message):
+        self.targets = dict(zip(message.name, message.position))
+        self.efforts = dict(zip(message.name, message.effort))
 
     def on_odom(self, message):
         pose = message.pose.pose
@@ -206,6 +306,14 @@ class IntegrationTrial(Node):
         yaw = math.atan2(2.0 * (q.w * q.z + q.x * q.y),
                          1.0 - 2.0 * (q.y * q.y + q.z * q.z))
         self.base_odom = (pose.position.x, pose.position.y, yaw)
+        # /odom is intentionally planar in this stack: its z is zero and it
+        # does not expose the floating pelvis height.  Reconstruct the parked
+        # nominal pelvis height and measured yaw for the evaluation renderer;
+        # using odom.z would put the rendered hands about 0.8 m below the box.
+        half_yaw = 0.5 * yaw
+        self.base_render_pose = (
+            pose.position.x, pose.position.y, 0.793,
+            math.cos(half_yaw), 0.0, 0.0, math.sin(half_yaw))
 
     def on_contacts(self, message):
         self.contacts = int(message.data)
@@ -237,16 +345,25 @@ class IntegrationTrial(Node):
             self.get_logger().info(f"status -> {stage}")
             if self.recorder is not None and stage in CAPTURE:
                 self.recorder.snapshot(stage)
+            if stage == "ready_after":
+                self.cycles_completed += 1
         self.last_status_wall = now
         if stage in ("release", "retreat", "ready_after"):
             self.seen_done_stage = True
         if stage == "idle" and self.seen_done_stage and self.started_wall is not None:
-            self.finished_wall = now
+            if EXPECTED_CYCLES > 0 and self.cycles_completed >= EXPECTED_CYCLES:
+                self.finished_wall = now
+
+    def on_base_truth(self, message):
+        p = message.pose.position
+        q = message.pose.orientation
+        self.base_truth_pose = (p.x, p.y, p.z, q.w, q.x, q.y, q.z)
 
     def on_ground_truth(self, message):
         self.gt = message
         if self.recorder is not None and self.joints is not None:
-            self.recorder.update_telemetry(self.joints, message, self.base_odom)
+            base = self.base_truth_pose or self.base_render_pose
+            self.recorder.update_telemetry(self.joints, message, base)
 
     def tick(self):
         now = time.time()
@@ -258,12 +375,17 @@ class IntegrationTrial(Node):
                         self.detected_world - np.array([p.x, p.y, p.z])))
                 self.pose_pub.publish(Bool(data=True))
                 self.started_wall = now
+                self.republish_start_until = now + 3.0
                 self.state = "RUNNING"
                 self.get_logger().info("published /g1/pick/start")
             elif now - self.start_wall > STARTUP_TIMEOUT:
                 self.fail("no_fresh_rgbd_pose")
             return
         if self.state == "RUNNING":
+            # Keep (re)publishing start for a short window: a single volatile
+            # sample can be lost before the controller's subscription matches.
+            if now < self.republish_start_until:
+                self.pose_pub.publish(Bool(data=True))
             if self.gt is not None:
                 p = self.gt.pose.position
                 q = self.gt.pose.orientation
@@ -271,7 +393,7 @@ class IntegrationTrial(Node):
                 half = np.array([0.075, 0.125, 0.07])
                 box_min_z = p.z - float(np.abs(rotation[2, :]) @ half)
                 base = self.base_odom or (0.0, 0.0, 0.0)
-                self.trajectory.append({
+                row = {
                     "t": now - self.started_wall,
                     "stage": self.status_log[-1][1] if self.status_log else "",
                     "x": p.x, "y": p.y, "z": p.z, "box_min_z": box_min_z,
@@ -284,19 +406,36 @@ class IntegrationTrial(Node):
                     "right_wrist_pitch": self.joints.get("right_wrist_pitch_joint", 0.0),
                     "tilt_deg": box_tilt_deg(rotation),
                     "pitch_deg": box_pitch_deg(rotation),
+                    "yaw_deg": math.degrees(math.atan2(rotation[1, 0],
+                                                       rotation[0, 0])),
                     "contacts": self.contacts,
                     "grasp": int(self.grasp),
-                })
+                }
+                for name in ARM_DIAG_JOINTS:
+                    base = name[:-6] if name.endswith("_joint") else name
+                    actual = self.joints.get(name)
+                    target = self.targets.get(name)
+                    row[f"{base}_cmd"] = target if target is not None else ""
+                    row[f"{base}_act"] = actual if actual is not None else ""
+                    row[f"{base}_err"] = (target - actual
+                                          if target is not None and actual is not None else "")
+                    row[f"{base}_tau"] = self.efforts.get(name, "")
+                    row[f"{base}_vel"] = self.joint_vel.get(name, "")
+                if self.recorder is not None:
+                    row.update(self.recorder.diagnostics())
+                self.trajectory.append(row)
             stage = self.status_log[-1][1] if self.status_log else ""
-            if (self.recorder is not None and stage in ("carry_squeeze", "transport")
+            if (self.recorder is not None and stage in DETAIL_STAGES
                     and now >= self.next_transport_shot):
-                self.recorder.snapshot(f"transport_{self.transport_shots:02d}")
+                self.recorder.snapshot(f"detail_{self.transport_shots:04d}_{stage}")
                 self.transport_shots += 1
                 self.next_transport_shot = now + TRANSPORT_SHOT_INTERVAL
             if self.finished_wall is not None:
                 self.state = "SETTLE"
                 self.finish_deadline = now + 2.0
-            elif self.seen_done_stage and now - self.last_status_wall > 6.0:
+            elif (self.seen_done_stage and EXPECTED_CYCLES > 0
+                  and self.cycles_completed >= EXPECTED_CYCLES
+                  and now - self.last_status_wall > 6.0):
                 # The final "idle" transition was dropped by the subscription
                 # queue; the sequence still reached ready_after.
                 self.state = "SETTLE"

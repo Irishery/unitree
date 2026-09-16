@@ -47,7 +47,7 @@ IK_ROT_TOL = 4.0 * math.pi / 180.0
 # Intermediate outside-the-box waypoints may lie a few millimetres beyond the
 # exact 6D workspace of a straight wrist.  The final grasp solutions remain
 # below the stricter IK_POS_TOL whenever reachable.
-IK_POS_ACCEPT = 25.0e-3
+IK_POS_ACCEPT = 60.0e-3
 IK_ROT_ACCEPT = 15.0 * math.pi / 180.0
 IK_STEP_MAX = 0.12
 CLEARANCE_MARGIN = 8.0e-3
@@ -135,10 +135,10 @@ def yaw_quaternion(yaw):
 class GraspParams:
     """Tuned grasp geometry; all offsets are in the box frame, metres."""
     box_dims: tuple = (0.150, 0.250, 0.140)
-    fingertip_reach: float = 0.140        # straight thumb on the short front panel
+    fingertip_reach: float = 0.150        # straight thumb on the short front panel
     approach_reach: float = 0.170         # keep thumb ahead of front edge until side entry
     lateral_beyond_face: float = 0.010    # initial broad-palm contact before arm preload
-    rise_above_top: float = -0.010        # palm centre below the top edge
+    rise_above_top: float = -0.024        # palm centre below the top edge
     approach_standoff: float = 0.10       # clears the inward-projecting open thumb
     hover_standoff: float = 0.10          # stay fully outside during the forward alignment
     align_standoff: float = 0.06          # shift forward while still clear of the side face
@@ -154,14 +154,15 @@ class GraspParams:
     lift_forward: float = 0.034
     lift_pitch_deg: float = 0.0          # in-plane wrist pitch applied during lift
     lift_elbow_min: float = 0.0          # do not reverse the elbow branch during carrying
-    hold_pitch_deg: float = -15.0        # lean toward the robot and load the straight thumbs
+    hold_pitch_deg: float = -8.0        # lean onto the straight thumbs so the box does not hang on the rails
     finger_close_scale: float = 1.0
-    # Extra squeeze used only while the base carries the box between tables.
-    # The stationary grasp is unchanged; a small inward preload and firmer
-    # fingers keep the box from rotating out of the grip during transport.
+    # Do not re-squeeze after the box is airborne.  Even another 5 mm per hand
+    # drove the already loaded rigid contacts to about 30 mm penetration; the
+    # solver then expelled the box roughly 78 mm downward.  The 30 mm preload
+    # established before lift remains active throughout transport.
     transport_squeeze: float = 0.0
     transport_finger_scale: float = 1.0
-    transport_pitch_deg: float = -15.0  # validated carry tilt (wrist contacts excluded)
+    transport_pitch_deg: float = -8.0
 
 
 class GraspKinematics:

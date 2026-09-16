@@ -19,6 +19,9 @@ def generate_launch_description():
         DeclareLaunchArgument("box_width", default_value="0.25"),
         DeclareLaunchArgument("box_height", default_value="0.14"),
         DeclareLaunchArgument("transport", default_value="false"),
+        DeclareLaunchArgument("cycles", default_value="1"),
+        DeclareLaunchArgument("walk", default_value="false"),
+        DeclareLaunchArgument("walk_backend", default_value="gym12"),
         IncludeLaunchDescription(
             PythonLaunchDescriptionSource(str(sim)),
             launch_arguments={
@@ -35,6 +38,9 @@ def generate_launch_description():
                 "box_width": LaunchConfiguration("box_width"),
                 "box_height": LaunchConfiguration("box_height"),
                 "transport": LaunchConfiguration("transport"),
+                "cycles": LaunchConfiguration("cycles"),
+                "walk": LaunchConfiguration("walk"),
+                "walk_backend": LaunchConfiguration("walk_backend"),
             }.items(),
         ),
     ])

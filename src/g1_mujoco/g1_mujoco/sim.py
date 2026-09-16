@@ -111,7 +111,45 @@ WALK_GAIT_PERIOD = 0.8
 WALK_CONTROL_DECIMATION = 10
 WALK_NUM_OBS = 47
 WALK_FALL_Z = 0.62
+# Nominal parked pelvis height.  The gait leaves the pelvis lower; parking
+# restores this so tabletop grasp geometry is the same for every cycle.
+WALK_STAND_PELVIS_Z = 0.793
 WALK_POLICY_PATH = "/ws/models/walk/g1_12dof_motion.pt"
+
+# Official Unitree G1-29dof velocity policy (unitree_rl_lab / IsaacLab).
+# Observation (480) = 5-frame history, term-major, of
+#   base_ang_vel(3)*0.2, projected_gravity(3), velocity_commands(3),
+#   joint_pos_rel(29), joint_vel_rel(29)*0.05, last_action(29)
+# Action (29) = default_joint_pos + 0.25 * output, reordered through joint_ids_map.
+UNITREE29_POLICY_PATH = "/ws/models/walk/g1_29dof_velocity.onnx"
+UNITREE29_JOINT_IDS_MAP = [0, 6, 12, 1, 7, 13, 2, 8, 14, 3, 9, 15, 22, 4, 10, 16,
+                           23, 5, 11, 17, 24, 18, 25, 19, 26, 20, 27, 21, 28]
+# Motor index order used by the G1 29-DoF Unitree SDK (also the robot MJCF order).
+UNITREE29_MOTOR_JOINTS = [
+    "left_hip_pitch_joint", "left_hip_roll_joint", "left_hip_yaw_joint",
+    "left_knee_joint", "left_ankle_pitch_joint", "left_ankle_roll_joint",
+    "right_hip_pitch_joint", "right_hip_roll_joint", "right_hip_yaw_joint",
+    "right_knee_joint", "right_ankle_pitch_joint", "right_ankle_roll_joint",
+    "waist_yaw_joint", "waist_roll_joint", "waist_pitch_joint",
+    "left_shoulder_pitch_joint", "left_shoulder_roll_joint", "left_shoulder_yaw_joint",
+    "left_elbow_joint", "left_wrist_roll_joint", "left_wrist_pitch_joint", "left_wrist_yaw_joint",
+    "right_shoulder_pitch_joint", "right_shoulder_roll_joint", "right_shoulder_yaw_joint",
+    "right_elbow_joint", "right_wrist_roll_joint", "right_wrist_pitch_joint", "right_wrist_yaw_joint",
+]
+UNITREE29_DEFAULT = [-0.1, -0.1, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.3, 0.3, 0.3,
+                     0.3, -0.2, -0.2, 0.25, -0.25, 0.0, 0.0, 0.0, 0.0, 0.97, 0.97,
+                     0.15, -0.15, 0.0, 0.0, 0.0, 0.0]
+UNITREE29_KP = [100.0, 100.0, 100.0, 150.0, 40.0, 40.0, 100.0, 100.0, 100.0, 150.0,
+                40.0, 40.0, 200.0, 200.0, 200.0, 40.0, 40.0, 40.0, 40.0, 40.0, 40.0,
+                40.0, 40.0, 40.0, 40.0, 40.0, 40.0, 40.0, 40.0]
+UNITREE29_KD = [2.0, 2.0, 2.0, 4.0, 2.0, 2.0, 2.0, 2.0, 2.0, 4.0, 2.0, 2.0, 5.0,
+                5.0, 5.0, 10.0, 10.0, 10.0, 10.0, 10.0, 10.0, 10.0, 10.0, 10.0,
+                10.0, 10.0, 10.0, 10.0, 10.0]
+UNITREE29_ACTION_SCALE = 0.25
+UNITREE29_HISTORY = 5
+UNITREE29_STEP_DECIMATION = 10   # 0.002 s * 10 = 50 Hz policy rate
+UNITREE29_CMD_RANGES = ((-0.5, 1.0), (-0.3, 0.3), (-0.2, 0.2))
+ARM_NAME_PARTS = ("shoulder", "elbow", "wrist")
 # Local velocity servo around the walking policy.  The policy has a
 # standstill drift and a velocity gain error on this 29-DoF body (heavier
 # than the 12-DoF training robot); feeding cmd + gain*(cmd - measured)
@@ -137,6 +175,39 @@ WALK_HOLD_YAW_CLIP = 0.3
 # floating base as a park brake; motion commands release it.
 WALK_STAND_CMD_EPS = 1e-3
 WALK_STAND_DELAY = 0.35
+# When leaving the kinematically parked stance, first let the symmetric
+# default leg pose carry the free root, then fade in the gait action.  Starting
+# the policy at an arbitrary gait phase caused a 4--6 cm lateral impulse that
+# shook a held box downward before the first commanded step.
+WALK_RELEASE_SETTLE = 2.0 * WALK_GAIT_PERIOD
+# Fade the gait action in over a longer window than the anchored settle so the
+# first few steps after the base is released are partial-amplitude and do not
+# jolt a held box.  The symmetric (double-support) release phase is set by
+# WALK_RELEASE_SETTLE above.
+WALK_ACTION_RAMP = 3.0
+# Arm hold gains for the pick.  The grasp is established with these compliant
+# gains.  Experiments showed that any stiffer arm hold (whole arm, ramped, or
+# even shoulder-only from the start) pulls the free box out of its seated
+# contacts before the first step, or bumps it during the clamp.  The compliant
+# gains are therefore kept throughout the carry.
+ARM_GRASP_KP, ARM_GRASP_KD, ARM_GRASP_LIMIT = 80.0, 3.0, 35.0
+# Arm-hold integral action (Nm per rad-second) and its windup clamp (Nm).
+ARM_INT_KI = 120.0
+ARM_INT_LIMIT = 12.0
+# When the base parks, the integral arm hold is faded out instead of cleared
+# instantly: an abrupt reset jerked the loaded arm and shook the free box out
+# of the grip just before the place.
+ARM_INT_PARK_TAU = 0.5
+# Floating-base arm stabilisation.  During locomotion the pelvis oscillates
+# (~1 g vertically) and a positional PD lets the hands swing with it.  A
+# world-frame sky-hook damper on each wrist (through the body Jacobian) resists
+# that hand motion without a reference pose: the slow intended carry is almost
+# untouched while the fast gait oscillation is damped.  Both quantities come
+# from the model and the joint/base state, so the scheme transfers to hardware.
+ARM_STAB_RAMP = 1.0
+ARM_STAB_DAMP_LIN = 40.0
+ARM_STAB_DAMP_ANG = 3.0
+ARM_STAB_LIMIT = 25.0
 LITE_HIDDEN_MESH_GROUP = "4"
 LITE_VISIBLE_OVAL_GROUP = "1"
 LITE_RGBA_LIGHT = "0.70 0.70 0.70 1"
@@ -162,6 +233,9 @@ class G1Mujoco(Node):
         self.declare_parameter("tabletop_pick", False)
         self.declare_parameter("walk", False)
         self.declare_parameter("walk_policy", WALK_POLICY_PATH)
+        # "gym12" = legacy 12-DoF policy, "unitree29" = official G1-29dof ONNX.
+        self.declare_parameter("walk_backend", "gym12")
+        self.declare_parameter("walk_policy_onnx", UNITREE29_POLICY_PATH)
         self.declare_parameter("cmd_vel_topic", "/cmd_vel")
         self.declare_parameter("smoothed_cmd_vel_topic", "/cmd_vel_smoothed")
         self.declare_parameter("box_x", 0.40)
@@ -171,18 +245,24 @@ class G1Mujoco(Node):
         self.tabletop_pick = bool(self.get_parameter("tabletop_pick").value)
         self.walk = bool(self.get_parameter("walk").value)
         self.viewer_lite = bool(self.get_parameter("viewer_lite").value)
-        if self.walk and self.tabletop_pick:
-            raise RuntimeError("walk:=true and tabletop_pick:=true are mutually exclusive")
+        rails = bool(self.get_parameter("box_side_rails").value)
         if self.tabletop_pick:
-            scene_file = ("g1_29dof_with_dex3_tabletop_rails.xml"
-                          if bool(self.get_parameter("box_side_rails").value)
-                          else "g1_29dof_with_dex3_tabletop.xml")
+            if self.walk:
+                # Combined mode: locomotion contacts plus the physical tabletop
+                # so the robot can walk between the tables while still grasping.
+                scene_file = ("g1_29dof_with_dex3_tabletop_rails_walk.xml" if rails
+                              else "g1_29dof_with_dex3_tabletop_walk.xml")
+            else:
+                scene_file = ("g1_29dof_with_dex3_tabletop_rails.xml" if rails
+                              else "g1_29dof_with_dex3_tabletop.xml")
         else:
             scene_file = "g1_29dof_with_dex3_nav.xml"
         description = Path(os.environ.get("G1_DESCRIPTION_DIR", "/opt/unitree_ros/robots/g1_description"))
         scene_path = str(description / scene_file)
         temporary_scene_paths = []
-        if self.walk:
+        if self.walk and not self.tabletop_pick:
+            # The nav walk scene rewrites obstacle contact masks; the combined
+            # tabletop+walk scene is generated with the correct masks instead.
             scene_path = self.build_walk_scene(scene_path)
             temporary_scene_paths.append(scene_path)
         if self.viewer_lite:
@@ -280,9 +360,15 @@ class G1Mujoco(Node):
         # freeze the drifting walking base inside the costmap's inflated
         # zone with no command able to move it back out.
         self.walk_blockers = (
-            self.build_nav_blockers(inflate=WALK_BLOCKER_MARGIN) if self.walk else [])
+            self.build_nav_blockers(inflate=WALK_BLOCKER_MARGIN)
+            if (self.walk and not self.tabletop_pick) else [])
         self.declare_parameter("publish_camera", True)
         self.publisher = self.create_publisher(JointState, "/g1/joint_states", 10)
+        # Evaluation-only mirror of the actuator commands: position is the
+        # commanded joint target, velocity the measured joint velocity and
+        # effort the clamped torque written to ctrl.  It lets an offline trial
+        # separate "target moved" from "actuator could not hold the target".
+        self.target_pub = self.create_publisher(JointState, "/g1/joint_targets", 10)
         self.contacts_pub = self.create_publisher(Int32, "/g1/mujoco/hand_box_contacts", 10)
         self.grasp_pub = self.create_publisher(Bool, "/g1/mujoco/physical_grasp", 10)
         # Perception only needs the RGB-D stream until a pick is planned.  The
@@ -293,6 +379,11 @@ class G1Mujoco(Node):
                                  self.set_camera_enabled, 10)
         self.box_truth_pub = self.create_publisher(
             PoseStamped, "/g1/mujoco/evaluation/box_ground_truth", 10)
+        # True floating-base pose for evaluation.  /odom is planar (z=0, yaw
+        # only), so an offline renderer cannot reconstruct hand/box geometry
+        # during walking from odom alone.
+        self.base_truth_pub = self.create_publisher(
+            PoseStamped, "/g1/mujoco/evaluation/base_ground_truth", 10)
         self.odom_pub = self.create_publisher(Odometry, "/odom", 10)
         self.scan_pub = self.create_publisher(LaserScan, "/scan", 10)
         self.mid360_points_pub = self.create_publisher(PointCloud2, "/mid360/points", 10)
@@ -617,6 +708,52 @@ class G1Mujoco(Node):
         self.model.dof_damping[self.walk_vadr] = 0.001
         self.model.dof_armature[self.walk_vadr] = 0.01
         self.model.dof_frictionloss[self.walk_vadr] = 0.1
+        self.walk_backend = str(self.get_parameter("walk_backend").value)
+        self.walk_static_stand = True
+        self.walk_stand_anchor = None
+        self.walk_vx_filt = 0.0
+        self.walk_vy_filt = 0.0
+        self.walk_wz_filt = 0.0
+        self.walk_last_nonzero_cmd_time = None
+        self.walk_release_anchored = False
+        self.walk_release_start_step = None
+        self.walk_release_until_step = None
+        self.walk_phase_origin_step = 0
+        # Integral action on the arm hold.  During locomotion the torso's
+        # vertical acceleration loads the arm joints with a steady inertial
+        # torque (~1 g on a ~3 kg arm) that pure PD cannot reject without so
+        # much stiffness that the grasp is disturbed.  The integral is held at
+        # zero while the grasp is being formed and only accumulates from the
+        # walk release preparation, while the base is still parked, so the
+        # needed bias is present before the first real step.
+        self.arm_integral = {name: 0.0 for name in self.names}
+        # Arm chains used by the floating-base stabilisation.
+        self.arm_joint_names = [
+            name for name in self.names
+            if any(part in name for part in ARM_NAME_PARTS)
+            and "_hand_" not in name]
+        self.arm_dofs_full = np.array(
+            [int(self.model.jnt_dofadr[self.joint_ids[name]])
+             for name in self.arm_joint_names], dtype=np.int64)
+        self.arm_side = {
+            name: ("left" if name.startswith("left") else "right")
+            for name in self.arm_joint_names}
+        self.wrist_body_ids = {
+            side: mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_BODY,
+                                    f"{side}_wrist_yaw_link")
+            for side in ("left", "right")}
+        self.base_dofs = (
+            np.arange(self.base_qveladr, self.base_qveladr + 6, dtype=np.int64)
+            if self.base_qveladr is not None else np.zeros(0, dtype=np.int64))
+        self.arm_jacp = np.zeros((3, self.model.nv))
+        self.arm_jacr = np.zeros((3, self.model.nv))
+        self.arm_stab_ff = {name: 0.0 for name in self.arm_joint_names}
+        self.last_fall_log_time = 0.0
+        self.prev_torso_attitude = None
+        self.last_torso_log_time = 0.0
+        if self.walk_backend == "unitree29":
+            self.setup_walk_unitree29()
+            return
         # torch is only imported when walking is actually requested.
         import torch
         policy_path = str(self.get_parameter("walk_policy").value)
@@ -633,14 +770,220 @@ class G1Mujoco(Node):
         self.walk_stand_anchor = None
         self.walk_last_nonzero_cmd_time = None
         self.last_fall_log_time = 0.0
+        self.prev_torso_attitude = None
+        self.last_torso_log_time = 0.0
         self.get_logger().info(
             "MuJoCo walk mode: Unitree 12-DoF locomotion policy drives the legs "
             f"(pd at 500 Hz, policy at {int(1.0 / (WALK_CONTROL_DECIMATION * self.model.opt.timestep))} Hz); "
             "/cmd_vel is the velocity command and odom is derived from the physics root; "
             "zero cmd parks the simulated root and holds a static standing pose "
-            "instead of running the gait policy")
+            "instead of running the gait policy; release uses a symmetric settle "
+            "and action ramp")
+
+    def setup_walk_unitree29(self):
+        import onnxruntime as ort
+        path = str(self.get_parameter("walk_policy_onnx").value)
+        self.u29_session = ort.InferenceSession(path, providers=["CPUExecutionProvider"])
+        self.u29_input = self.u29_session.get_inputs()[0].name
+        self.u29_policy_joints = [UNITREE29_MOTOR_JOINTS[j] for j in UNITREE29_JOINT_IDS_MAP]
+        self.u29_joint_set = set(self.u29_policy_joints)
+        self.u29_qadr = np.array([int(self.model.jnt_qposadr[self.joint_ids[n]])
+                                  for n in self.u29_policy_joints])
+        self.u29_vadr = np.array([int(self.model.jnt_dofadr[self.joint_ids[n]])
+                                  for n in self.u29_policy_joints])
+        self.u29_aid = np.array([self.actuator_ids[n] for n in self.u29_policy_joints])
+        self.u29_default = np.array(UNITREE29_DEFAULT, dtype=np.float64)
+        self.u29_kp = np.array(UNITREE29_KP, dtype=np.float64)
+        self.u29_kd = np.array(UNITREE29_KD, dtype=np.float64)
+        self.u29_arm_mask = np.array([any(p in n for p in ARM_NAME_PARTS)
+                                      for n in self.u29_policy_joints])
+        count = len(self.u29_policy_joints)
+        self.u29_action = np.zeros(count, dtype=np.float32)
+        self.u29_last_action = np.zeros(count, dtype=np.float32)
+        from collections import deque
+        self.u29_hist = {key: deque(maxlen=UNITREE29_HISTORY)
+                         for key in ("ang", "grav", "cmd", "jpos", "jvel", "act")}
+        self.u29_hist_ready = False
+        self.walk_action = np.zeros(len(WALK_LEG_JOINTS), dtype=np.float32)
+        self.walk_target = WALK_DEFAULT_ANGLES.copy()
+        # Start from the policy's nominal stance so the first observation is a
+        # valid standing state.
+        for index, name in enumerate(self.u29_policy_joints):
+            self.data.qpos[self.u29_qadr[index]] = self.u29_default[index]
+        mujoco.mj_forward(self.model, self.data)
+        for name in self.names:
+            self.target[name] = self.qpos(name)
+        # While the command is idle the base is parked (as in the gym12 path) so
+        # the manipulation is done from a still, upright stance; it is released
+        # as soon as /cmd_vel becomes non-zero and the policy then walks.
+        self.walk_static_stand = True
+        self.get_logger().info(
+            f"MuJoCo walk mode: Unitree G1-29dof velocity ONNX policy {path} "
+            "(50 Hz, obs=480, arms overridden by the manipulation controller)")
+
+    def _unitree29_observation(self):
+        qw, qx, qy, qz = self.data.qpos[self.base_qposadr + 3:self.base_qposadr + 7]
+        rotation = np.array([
+            [1 - 2 * (qy * qy + qz * qz), 2 * (qx * qy - qz * qw), 2 * (qx * qz + qy * qw)],
+            [2 * (qx * qy + qz * qw), 1 - 2 * (qx * qx + qz * qz), 2 * (qy * qz - qx * qw)],
+            [2 * (qx * qz - qy * qw), 2 * (qy * qz + qx * qw), 1 - 2 * (qx * qx + qy * qy)],
+        ])
+        gravity = rotation.T @ np.array([0.0, 0.0, -1.0])
+        # MuJoCo free-joint angular velocity is already in the body frame.
+        ang_vel = self.data.qvel[self.base_qveladr + 3:self.base_qveladr + 6]
+        vx, vy, wz = self.raw_walk_cmd()
+        ranges = UNITREE29_CMD_RANGES
+        command = np.array([
+            min(max(vx, ranges[0][0]), ranges[0][1]),
+            min(max(vy, ranges[1][0]), ranges[1][1]),
+            min(max(wz, ranges[2][0]), ranges[2][1]),
+        ])
+        terms = {
+            "ang": np.asarray(ang_vel, float) * 0.2,
+            "grav": np.asarray(gravity, float),
+            "cmd": command.astype(float),
+            "jpos": np.asarray(self.data.qpos[self.u29_qadr] - self.u29_default, float),
+            "jvel": np.asarray(self.data.qvel[self.u29_vadr], float) * 0.05,
+            "act": self.u29_last_action.astype(float),
+        }
+        for key, value in terms.items():
+            self.u29_hist[key].append(value.astype(np.float32))
+        if not self.u29_hist_ready:
+            for key in self.u29_hist:
+                while len(self.u29_hist[key]) < UNITREE29_HISTORY:
+                    self.u29_hist[key].appendleft(self.u29_hist[key][0])
+            self.u29_hist_ready = True
+        observation = []
+        for key in ("ang", "grav", "cmd", "jpos", "jvel", "act"):
+            for frame in self.u29_hist[key]:
+                observation.extend(frame)
+        return np.asarray(observation, dtype=np.float32)[None, :]
+
+    def infer_unitree29(self):
+        observation = self._unitree29_observation()
+        out = self.u29_session.run(None, {self.u29_input: observation})[0][0]
+        self.u29_last_action = out.astype(np.float32)
+        self.u29_action = out
+
+    def control_walk_unitree29(self):
+        if self.walk_should_static_stand():
+            self.static_stand_walk()
+            self.apply_static_walk_root()
+            targets = self.u29_default
+        else:
+            self.walk_static_stand = False
+            self.walk_stand_anchor = None
+            if self.step_count % UNITREE29_STEP_DECIMATION == 0:
+                self.infer_unitree29()
+            targets = self.u29_default + UNITREE29_ACTION_SCALE * self.u29_action
+        if self.step_count % 250 == 0:
+            self.get_logger().info(
+                f"u29 pos=({self.data.qpos[self.base_qposadr]:.3f},"
+                f"{self.data.qpos[self.base_qposadr + 1]:.3f}) "
+                f"base_z={self.data.qpos[self.base_qposadr + 2]:.3f} "
+                f"static={self.walk_static_stand}")
+        for index, name in enumerate(self.u29_policy_joints):
+            position = float(self.data.qpos[self.u29_qadr[index]])
+            velocity = float(self.data.qvel[self.u29_vadr[index]])
+            if self.u29_arm_mask[index] and self.tabletop_pick:
+                # During manipulation the arms stay under the pick controller.
+                wanted, kp, kd, limit = self.target[name], 80.0, 3.0, 35.0
+            else:
+                wanted = float(targets[index])
+                kp, kd, limit = self.u29_kp[index], self.u29_kd[index], 60.0
+            torque = kp * (wanted - position) - kd * velocity
+            self.data.ctrl[self.u29_aid[index]] = max(-limit, min(limit, torque))
+        for name, actuator in self.actuator_ids.items():
+            if name in self.u29_joint_set:
+                continue
+            finger = "_hand_" in name
+            kp, kd = (12.0, 0.45) if finger else (80.0, 3.0)
+            limit = 3.0 if finger else 35.0
+            torque = kp * (self.target[name] - self.qpos(name)) - kd * self.qvel(name)
+            self.data.ctrl[actuator] = max(-limit, min(limit, torque))
+
+    def stabilize_torso(self):
+        """IMU-style torso attitude hold using the waist joints.
+
+        Keeps the chest level while the legs walk, so a carried object is not
+        shaken by the gait.  This uses only the measured torso orientation and
+        the waist actuators, so the same loop transfers to the real G1.
+        """
+        if self.torso_body_id < 0:
+            return
+        rotation = self.data.xmat[self.torso_body_id].reshape(3, 3)
+        pitch = math.atan2(-rotation[2, 0],
+                           math.hypot(rotation[2, 1], rotation[2, 2]))
+        roll = math.atan2(rotation[2, 1], rotation[2, 2])
+        dt = float(self.model.opt.timestep)
+        if self.prev_torso_attitude is None:
+            pitch_rate = roll_rate = 0.0
+        else:
+            pitch_rate = (pitch - self.prev_torso_attitude[0]) / dt
+            roll_rate = (roll - self.prev_torso_attitude[1]) / dt
+        self.prev_torso_attitude = (pitch, roll)
+        kp, kd = 120.0, 12.0
+        for name, error, rate in (("waist_pitch_joint", pitch, pitch_rate),
+                                  ("waist_roll_joint", roll, roll_rate)):
+            low, high = self.model.jnt_range[self.joint_ids[name]]
+            command = -kp * error - kd * rate
+            self.target[name] = max(float(low), min(float(high), command))
+        now_sec = self.get_clock().now().nanoseconds * 1e-9
+        if now_sec - self.last_torso_log_time > 1.0:
+            self.last_torso_log_time = now_sec
+            self.get_logger().info(
+                f"torso hold: pitch={math.degrees(pitch):.1f}deg roll={math.degrees(roll):.1f}deg")
+
+    def stabilize_arm_motion(self):
+        """World-frame damping that keeps the hands off the gait oscillation.
+
+        Uses the wrist body Jacobian to add a sky-hook damper on the hand's
+        world velocity.  It needs no reference pose and is ~0 at rest, so it is
+        faded in from the walk release preparation and cannot disturb the grasp.
+        """
+        if not self.tabletop_pick or self.base_dofs.size == 0:
+            return
+        if self.walk_static_stand and self.walk_release_start_step is None:
+            for name in self.arm_joint_names:
+                self.arm_stab_ff[name] = 0.0
+            return
+        start = self.walk_release_start_step
+        if start is None:
+            alpha = 1.0
+        else:
+            elapsed = (self.step_count - start) * float(self.model.opt.timestep)
+            alpha = min(1.0, max(0.0, elapsed / ARM_STAB_RAMP))
+        for side, body_id in self.wrist_body_ids.items():
+            if body_id < 0:
+                continue
+            mujoco.mj_jacBody(self.model, self.data, self.arm_jacp,
+                              self.arm_jacr, body_id)
+            linear = self.arm_jacp @ self.data.qvel
+            angular = self.arm_jacr @ self.data.qvel
+            force = -ARM_STAB_DAMP_LIN * linear
+            moment = -ARM_STAB_DAMP_ANG * angular
+            tau = self.arm_jacp.T @ force + self.arm_jacr.T @ moment
+            for index, name in enumerate(self.arm_joint_names):
+                if self.arm_side[name] != side:
+                    continue
+                value = alpha * float(tau[self.arm_dofs_full[index]])
+                self.arm_stab_ff[name] = max(-ARM_STAB_LIMIT,
+                                             min(ARM_STAB_LIMIT, value))
 
     def control_walk(self):
+        # Level the chest while the gait runs.  While parked the waist keeps
+        # its pose; actively re-leveling it during the grasp changed how the
+        # free box seated on the thumbs and let it hang on the rails.
+        if self.tabletop_pick and not self.walk_static_stand:
+            self.stabilize_torso()
+        self.stabilize_arm_motion()
+        if self.step_count % 500 == 0:
+            cmd = self.walk_cmd()
+            self.get_logger().info(
+                f"walk base=({self.base_x:.3f},{self.base_y:.3f}) yaw={self.base_yaw:.2f} "
+                f"servo_cmd=({cmd[0]:.3f},{cmd[1]:.3f},{cmd[2]:.3f}) "
+                f"meas=({self.walk_vx_filt:.3f},{self.walk_vy_filt:.3f}) "
+                f"static={self.walk_static_stand}")
         # Policy PD on the legs.
         q_leg = self.data.qpos[self.walk_qadr]
         v_leg = self.data.qvel[self.walk_vadr]
@@ -652,9 +995,33 @@ class G1Mujoco(Node):
             if name in self.walk_leg_set:
                 continue
             finger = "_hand_" in name
-            kp, kd = (3.0, 0.18) if finger else (150.0, 4.0)
-            limit = 0.9 if finger else 60.0
-            torque = kp * (self.target[name] - self.qpos(name)) - kd * self.qvel(name)
+            if self.tabletop_pick:
+                # Keep the validated compliant tabletop gains in the combined
+                # walk scene as well.  Stiffer arm holds were tried and pulled
+                # the free box out of its seated contacts at gait release.
+                arm = (not finger) and any(
+                    part in name for part in ARM_NAME_PARTS)
+                kp, kd = (12.0, 0.45) if finger else (ARM_GRASP_KP, ARM_GRASP_KD)
+                limit = 3.0 if finger else ARM_GRASP_LIMIT
+                error = self.target[name] - self.qpos(name)
+                integral = 0.0
+                if arm:
+                    if self.walk_static_stand and self.walk_release_start_step is None:
+                        self.arm_integral[name] *= math.exp(
+                            -float(self.model.opt.timestep) / ARM_INT_PARK_TAU)
+                    else:
+                        self.arm_integral[name] = max(
+                            -ARM_INT_LIMIT, min(ARM_INT_LIMIT,
+                                                self.arm_integral[name]
+                                                + ARM_INT_KI * error
+                                                * float(self.model.opt.timestep)))
+                    integral = self.arm_integral[name]
+                torque = (kp * error + integral + self.arm_stab_ff.get(name, 0.0)
+                          - kd * self.qvel(name))
+            else:
+                kp, kd = (3.0, 0.18) if finger else (150.0, 4.0)
+                limit = 0.9 if finger else 60.0
+                torque = kp * (self.target[name] - self.qpos(name)) - kd * self.qvel(name)
             self.data.ctrl[actuator] = max(-limit, min(limit, torque))
 
     def raw_walk_cmd(self):
@@ -735,13 +1102,20 @@ class G1Mujoco(Node):
         obs[9:21] = q_leg - WALK_DEFAULT_ANGLES
         obs[21:33] = v_leg * WALK_DOF_VEL_SCALE
         obs[33:45] = self.walk_action
-        phase = ((self.step_count * self.model.opt.timestep) % WALK_GAIT_PERIOD) / WALK_GAIT_PERIOD
+        phase_step = max(0, self.step_count - self.walk_phase_origin_step)
+        phase = ((phase_step * self.model.opt.timestep) % WALK_GAIT_PERIOD) / WALK_GAIT_PERIOD
         obs[45] = math.sin(2.0 * math.pi * phase)
         obs[46] = math.cos(2.0 * math.pi * phase)
         import torch
         with torch.no_grad():
-            self.walk_action = self.walk_policy(
+            action = self.walk_policy(
                 torch.from_numpy(obs).unsqueeze(0)).detach().numpy().squeeze()
+        if self.walk_release_start_step is not None:
+            ramp_steps = max(1, int(WALK_ACTION_RAMP / self.model.opt.timestep))
+            alpha = min(1.0, max(
+                0.0, (self.step_count - self.walk_release_start_step) / ramp_steps))
+            action *= alpha
+        self.walk_action = action
         self.walk_target = self.walk_action * WALK_ACTION_SCALE + WALK_DEFAULT_ANGLES
 
     def update_walk_odom(self):
@@ -774,7 +1148,11 @@ class G1Mujoco(Node):
     def static_stand_walk(self):
         if not self.walk_static_stand or self.walk_stand_anchor is None:
             self.walk_hold = (self.base_x, self.base_y, self.base_yaw)
-            self.walk_stand_anchor = (self.base_x, self.base_y, self.base_yaw, self.base_z)
+            # Park at the nominal standing height, not the (often crouched)
+            # height left by the gait: a low pelvis makes a tabletop box appear
+            # high and out of the arm workspace for the next pick.
+            self.walk_stand_anchor = (
+                self.base_x, self.base_y, self.base_yaw, WALK_STAND_PELVIS_Z)
         self.walk_static_stand = True
         self.walk_action[:] = 0.0
         self.walk_target = WALK_DEFAULT_ANGLES.copy()
@@ -783,7 +1161,8 @@ class G1Mujoco(Node):
         if self.base_qposadr is None or self.base_qveladr is None:
             return
         if self.walk_stand_anchor is None:
-            self.walk_stand_anchor = (self.base_x, self.base_y, self.base_yaw, self.base_z)
+            self.walk_stand_anchor = (
+                self.base_x, self.base_y, self.base_yaw, WALK_STAND_PELVIS_Z)
         x, y, yaw, z = self.walk_stand_anchor
         qpos = self.data.qpos
         qvel = self.data.qvel
@@ -799,10 +1178,14 @@ class G1Mujoco(Node):
 
     def step(self):
         if self.walk:
-            self.control_walk()
-            if self.walk_static_stand:
-                self.static_stand_walk()
-                self.apply_static_walk_root()
+            if self.walk_backend == "unitree29":
+                self.control_walk_unitree29()
+            else:
+                self.control_walk()
+                if self.walk_static_stand:
+                    if not self.walk_release_anchored:
+                        self.static_stand_walk()
+                    self.apply_static_walk_root()
         else:
             self.integrate_base()
             self.apply_base_pose()
@@ -844,13 +1227,33 @@ class G1Mujoco(Node):
                     self.get_logger().warn(
                         f"box speed {speed:.1f} m/s at {self.data.xpos[self.box_body_id].round(3).tolist()} "
                         f"base=({self.base_x:.3f},{self.base_y:.3f},{self.base_yaw:.2f}) contacts={pairs[:8]}")
-        if self.walk and self.step_count % WALK_CONTROL_DECIMATION == 0:
+        if (self.walk and self.walk_backend != "unitree29"
+                and self.step_count % WALK_CONTROL_DECIMATION == 0):
             if self.walk_should_static_stand():
+                self.walk_release_anchored = False
+                self.walk_release_start_step = None
+                self.walk_release_until_step = None
                 self.static_stand_walk()
             else:
-                self.walk_static_stand = False
-                self.walk_stand_anchor = None
-                self.infer_walk_policy()
+                if self.walk_static_stand and not self.walk_release_anchored:
+                    self.walk_release_anchored = True
+                    settle_steps = int(WALK_RELEASE_SETTLE / self.model.opt.timestep)
+                    self.walk_release_start_step = self.step_count
+                    self.walk_release_until_step = self.step_count + settle_steps
+                    self.walk_phase_origin_step = self.step_count
+                    self.walk_action[:] = 0.0
+                    self.walk_target = WALK_DEFAULT_ANGLES.copy()
+                    self.infer_walk_policy()
+                elif self.walk_release_anchored:
+                    self.infer_walk_policy()
+                    if self.step_count >= self.walk_release_until_step:
+                        self.walk_static_stand = False
+                        self.walk_stand_anchor = None
+                        self.walk_release_anchored = False
+                        self.walk_release_start_step = None
+                        self.walk_release_until_step = None
+                else:
+                    self.infer_walk_policy()
         if self.step_count % ODOM_PERIOD_STEPS == 0:
             stamp = self.get_clock().now().to_msg()
             self.publish_odom(stamp)
@@ -1120,6 +1523,15 @@ class G1Mujoco(Node):
         msg.position = [self.qpos(name) for name in self.names]
         msg.velocity = [self.qvel(name) for name in self.names]
         self.publisher.publish(msg)
+        target_msg = JointState()
+        target_msg.header.stamp = stamp
+        target_msg.name = self.names
+        target_msg.position = [float(self.target.get(name, self.qpos(name)))
+                               for name in self.names]
+        target_msg.velocity = [self.qvel(name) for name in self.names]
+        target_msg.effort = [float(self.data.ctrl[self.actuator_ids[name]])
+                             for name in self.names]
+        self.target_pub.publish(target_msg)
         contacts = 0
         for index in range(self.data.ncon):
             contact = self.data.contact[index]
@@ -1143,6 +1555,17 @@ class G1Mujoco(Node):
             truth.pose.orientation.y = float(quaternion[2])
             truth.pose.orientation.z = float(quaternion[3])
             self.box_truth_pub.publish(truth)
+        if self.base_qposadr is not None:
+            base = PoseStamped()
+            base.header.stamp, base.header.frame_id = stamp, "odom"
+            base.pose.position.x = float(self.data.qpos[self.base_qposadr + 0])
+            base.pose.position.y = float(self.data.qpos[self.base_qposadr + 1])
+            base.pose.position.z = float(self.data.qpos[self.base_qposadr + 2])
+            base.pose.orientation.w = float(self.data.qpos[self.base_qposadr + 3])
+            base.pose.orientation.x = float(self.data.qpos[self.base_qposadr + 4])
+            base.pose.orientation.y = float(self.data.qpos[self.base_qposadr + 5])
+            base.pose.orientation.z = float(self.data.qpos[self.base_qposadr + 6])
+            self.base_truth_pub.publish(base)
 
     def camera_info(self, stamp):
         info = CameraInfo()

@@ -35,9 +35,16 @@ RAILED_BOX_HEIGHT = 0.140
 # A 25 mm shelf gives the two nearly straight fingers enough bearing area to
 # support the load with the whole hand.  With the earlier 15 mm shelf the
 # fingers rolled off its outer edge during the 30 second hold.
-BOX_RAIL_PROTRUSION = 0.025
-BOX_RAIL_HEIGHT = 0.016
-BOX_RAIL_CENTER_Z = 0.045
+BOX_RAIL_PROTRUSION = 0.030
+BOX_RAIL_HEIGHT = 0.020
+# The shelf also reaches this far into the box body so its underside overlaps
+# the top of the straight fingers.  A purely outward shelf only met the finger
+# at the outer corner, so the box could slip past the rail and wedge it
+# between the index and middle fingers.
+BOX_RAIL_INSET = 0.0
+# High enough that the straight DEX3 fingers sit fully below the rail, so the
+# rail underside (not the finger gap) takes the load and stops downward slip.
+BOX_RAIL_CENTER_Z = 0.050
 ROOM_HALF_EXTENT = 3.0
 WALL_THICKNESS = 0.05
 WALL_HEIGHT = 2.5
@@ -81,6 +88,9 @@ def main():
     parser.add_argument("--scene", choices=("tabletop", "nav"), default="tabletop")
     parser.add_argument("--box-side-rails", action="store_true",
                         help="add two visible physical anti-slip rails to the box side faces")
+    parser.add_argument("--walk-contacts", action="store_true",
+                        help="also let the robot geoms collide with the ground plane so "
+                             "the pretrained locomotion policy can support the base")
     args = parser.parse_args()
     table_half_length = TABLETOP_TABLE_HALF_LENGTH if args.scene == "tabletop" else NAV_TABLE_HALF_LENGTH
     table_half_width = TABLETOP_TABLE_HALF_WIDTH if args.scene == "tabletop" else NAV_TABLE_HALF_WIDTH
@@ -127,8 +137,21 @@ def main():
     # MuJoCo contacts; otherwise the visual model can be dragged into a table
     # when testing impossible or very tight goals.
     for geom in pelvis.iter("geom"):
+        # Keep the official render-only meshes out of the contact model.  The
+        # source MJCF pairs many links (including every DEX3 phalanx) with a
+        # group-1, zero-density visual mesh and a separate collision geom.
+        # Enabling contacts on both duplicates every hand/box contact and can
+        # make a free box appear to hang from geometry that is only visual.
+        if (geom.get("group") == "1" and geom.get("density") == "0"):
+            geom.set("contype", "0")
+            geom.set("conaffinity", "0")
+            continue
         geom.set("contype", "2" if physical_tabletop else "0")
-        geom.set("conaffinity", "4" if physical_tabletop else "0")
+        # Bit 4 (value 8) is the ground plane's contype; OR-ing it into the
+        # robot conaffinity keeps the table (4) and box (2-affinity side)
+        # contacts while adding real foot-ground contact for walk mode.
+        robot_affinity = 4 | (8 if args.walk_contacts else 0)
+        geom.set("conaffinity", str(robot_affinity) if physical_tabletop else "0")
         # DEX3 rubber pads are represented through Coulomb friction only.
         # There are no extra collision shapes or grasp constraints.
         parent = next((body for body in pelvis.iter("body") if geom in list(body)), None)
@@ -231,9 +254,9 @@ def main():
             ET.SubElement(box, "geom", {
                 "name": f"pickup_box_{side}_rail",
                 "type": "box",
-                "pos": (f"0 {sign * (box_width * 0.5 + BOX_RAIL_PROTRUSION * 0.5):.4f} "
+                "pos": (f"0 {sign * (box_width * 0.5 + BOX_RAIL_PROTRUSION * 0.5 - BOX_RAIL_INSET):.4f} "
                         f"{BOX_RAIL_CENTER_Z:.4f}"),
-                "size": (f"{box_length * 0.5:.4f} {BOX_RAIL_PROTRUSION * 0.5:.4f} "
+                "size": (f"{box_length * 0.5:.4f} {(BOX_RAIL_PROTRUSION * 0.5 + BOX_RAIL_INSET):.4f} "
                          f"{BOX_RAIL_HEIGHT * 0.5:.4f}"),
                 "mass": "0.0025",
                 "contype": "4" if physical_tabletop else "0",
