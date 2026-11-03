@@ -29,6 +29,9 @@ Humble/CycloneDDS viewer. Физический bridge нельзя запуск�
 
 ## Gazebo на ноутбуке
 
+Gazebo-стенд в этой ветке оставлен как предыдущая демонстрация с коробкой;
+стационарный bottle pick реализован в MuJoCo (см. следующий раздел).
+
 Для ROS 2 Jazzy + Gazebo Harmonic подготовлен отдельный Docker-стенд с
 официальной моделью G1 29 DoF и двумя артикулированными кистями DEX3-1:
 
@@ -64,41 +67,71 @@ costmap и инструмент `Nav2 Goal`.
 ./scripts/sim_up.sh headless slam:=false
 ```
 
-## MuJoCo: физический DEX3 grasp
+## MuJoCo: стационарный захват бутылки
 
-MuJoCo сейчас используется как навигационный стенд A → B: SLAM Toolbox, Nav2,
-`/scan`, `/odom` и RViz запускаются по умолчанию, а распознавание/захват коробки
-отключены до явного `tabletop_pick:=true`. Сцена всё ещё содержит официальный
-MJCF G1 29 DoF с DEX3-1, стол и свободную коробку, чтобы можно было вернуться к
-контактному grasp без пересборки архитектуры.
+Ветка `bottle_pix` переводит MuJoCo-стенд с коробки на вертикальную бутылку.
+Робот стоит на двух ногах у стола, не ходит и не получает `/cmd_vel`; одна рука
+подходит к бутылке, смыкается, поднимает её и возвращает на стол.
 
 ```bash
 ./scripts/mujoco_build.sh
+./scripts/mujoco_up.sh tabletop_pick:=true navigation:=false slam:=false
+```
+
+Во втором терминале:
+
+```bash
+./scripts/mujoco_pick.sh start
+./scripts/mujoco_pick.sh status
+```
+
+Отмена — `./scripts/mujoco_pick.sh cancel`.
+
+Пакетный прогон пяти позиций бутылки с отдельной папкой и скриншотами на
+каждый тест:
+
+```bash
+./scripts/mujoco_bottle_trials.sh --detach
+```
+
+Результаты: `src/g1_mujoco/artifacts/bottle_trials/<timestamp>/trial_*/frames/`
+и общий `summary.json`.
+
+Сцена содержит официальный MJCF G1 29 DoF с DEX3-1, стол и бутылку с
+lathe-корпусом `0.062 × 0.235 м` (диаметр × высота), плечом, горлом, синей
+крышкой и белой этикеткой. Бутылка — полноценное динамическое тело с
+collision-цилиндром, гравитацией и контактом со столом; масса ~0.5 кг. RGB-D детектор публикует
+`/g1/perception/bottle_pose` и `/g1/perception/bottle_size` (диаметр, высота,
+confidence); контроллер `g1_bottle_pick_controller` строит IK-траекторию
+`approach → close → lift → hold → lower → release` уже по измеренному размеру,
+а не только по фиксированным launch-параметрам. Поддерживаемый диапазон
+диаметра — `0.03…0.09 м`, высоты — `0.08…0.35 м`.
+По умолчанию используется правая рука; `grasp_side:=left` переключает захват
+на левую.
+
+Захват контактный, без привязки к руке: бутылка остаётся свободным телом с
+коллизией, гравитацией и контактом со столом. Если пальцы не удерживают её,
+она может выскользнуть — это нормально; траектория и база при этом не
+подменяют физику. Тесты проверяют, что бутылка не опрокидывается и остаётся
+на столе. Для этого у неё есть скрытое широкое collision-основание: визуальная
+форма остаётся 0.5-литровой, но опорная площадка шире. Топики `/g1/mujoco/hand_bottle_contacts` и
+`/g1/mujoco/physical_grasp` публикуют наблюдаемые контакты.
+
+MuJoCo также остаётся навигационным стендом A → B: SLAM Toolbox, Nav2,
+`/scan`, `/odom` и RViz запускаются по умолчанию, если не передан
+`navigation:=false`. Навигационная база кинематическая (`/cmd_vel → odom/tf`),
+а не динамическая ходьба. `walk:=true` с `tabletop_pick:=true` намеренно
+запрещён.
+
+```bash
 ./scripts/mujoco_up.sh
-```
-
-Задать точку B в уже запущенном контейнере:
-
-```bash
 ./scripts/mujoco_nav_goal.sh 1.0 0.0
-```
-
-Подробный поток Nav2 feedback включается отдельно:
-
-```bash
 ./scripts/mujoco_nav_goal.sh --feedback 1.0 0.0
 ```
 
 Управление отдельными суставами идёт через
-`/g1/mujoco/joints/<joint>/command`; команды физических кистей
-`/g1/dex3/{left,right}/command` также принимаются напрямую. Индикаторы
-`/g1/mujoco/hand_box_contacts` и `/g1/mujoco/physical_grasp` сообщают только
-о реальных контактах MuJoCo с коробкой — они не создают constraint или attach.
-
-MuJoCo-стенд также поднимает SLAM Toolbox, Nav2, `/scan`, `/odom` и RViz.
-Навигационная база в MuJoCo пока кинематическая (`/cmd_vel → odom/tf`), а не
-динамическая ходьба; это слой для проверки ROS2 GUI/SLAM/Nav2-контракта перед
-переносом на Gazebo или физический G1.
+`/g1/mujoco/joints/<joint>/command`; команды кистей
+`/g1/dex3/{left,right}/command` также принимаются напрямую.
 
 Для подготовки к железу MuJoCo можно запустить с эмуляцией родного G1
 high-level locomotion API:
@@ -113,16 +146,6 @@ high-level locomotion API:
 Это проверяет ROS 2 wire contract `/api/sport/request` →
 `/api/sport/response`; закрытый firmware-контроллер Unitree в MuJoCo при этом
 не запускается.
-
-Полная проверка Nav2 через этот hardware-like API:
-
-```bash
-./scripts/mujoco_loco_nav_up.sh viewer_lite:=true publish_camera:=false
-RVIZ_PROFILE=lite ./scripts/mujoco_rviz.sh
-```
-
-Цепочка будет такой: `Nav2 /cmd_vel → /api/sport/request → MuJoCo`, как
-подготовка к замене sim-адаптера настоящим G1 high-level locomotion service.
 
 ## 1. Подготовка робота (Ubuntu 22.04 / Humble)
 

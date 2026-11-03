@@ -1,0 +1,14 @@
+.git
+.gitignore
+.vscode
+.agents
+.codex
+**/__pycache__
+**/*.pyc
+artifacts/
+**/artifacts/
+build/
+install/
+log/
+g1_hardware_logs/
+models/checkpoints/

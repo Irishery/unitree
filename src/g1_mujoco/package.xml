@@ -2,7 +2,7 @@
 <package format="3">
   <name>g1_mujoco</name>
   <version>0.1.0</version>
-  <description>MuJoCo contact-physics simulation adapter for Unitree G1 DEX3-1.</description>
+  <description>MuJoCo stationary bottle-pick simulation adapter for Unitree G1 DEX3-1.</description>
   <maintainer email="maintainer@example.com">G1 ROS 2 team</maintainer>
   <license>BSD-3-Clause</license>
   <buildtool_depend>ament_python</buildtool_depend>

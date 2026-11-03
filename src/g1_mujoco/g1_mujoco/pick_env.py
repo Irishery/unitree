@@ -1,4 +1,4 @@
-"""Gymnasium environment for contact-only bimanual G1 DEX3 box pickup."""
+"""Gymnasium environment for G1 DEX3 bottle pickup."""
 from pathlib import Path
 import os
 
@@ -18,7 +18,7 @@ ARM_JOINTS = [
 ]
 CONTROL_JOINTS = ARM_JOINTS + HAND_JOINTS["left"] + HAND_JOINTS["right"]
 
-# Reuses the collision-free reference pose from pick_controller.py.  The
+# Reuses the collision-free reference pose from the old reference controller.  The
 # fingers are deliberately open here; closing them is part of the task.
 PREGRASP = {
     "left_shoulder_pitch_joint": -0.65, "left_shoulder_roll_joint": 0.55,
@@ -42,9 +42,9 @@ CURRICULUM_STAGES = ("grasp", "approach", "full")
 
 
 class G1PickEnv(gym.Env):
-    """Learn arm/DEX3 joint targets from box pose and proprioception.
+    """Learn arm/DEX3 joint targets from bottle pose and proprioception.
 
-    The observation deliberately uses the box pose as perceived in simulation
+    The observation deliberately uses the bottle pose as perceived in simulation
     rather than raw renderer pixels.  RGB-D detection is trained and validated
     separately; this keeps early contact learning tractable.
     """
@@ -56,18 +56,18 @@ class G1PickEnv(gym.Env):
         if stage not in CURRICULUM_STAGES:
             raise ValueError(f"stage must be one of {CURRICULUM_STAGES}, got {stage!r}")
         description = Path(os.environ.get("G1_DESCRIPTION_DIR", "/opt/unitree_ros/robots/g1_description"))
-        self.model = mujoco.MjModel.from_xml_path(str(model_path or description / "g1_29dof_with_dex3_tabletop.xml"))
+        self.model = mujoco.MjModel.from_xml_path(str(model_path or description / "g1_29dof_with_dex3_bottle.xml"))
         self.data = mujoco.MjData(self.model)
         self.max_steps = max_steps
         self.physics_steps = physics_steps
         self.stage = stage
         self.joint_ids = {name: mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_JOINT, name) for name in CONTROL_JOINTS}
         self.actuator_ids = {name: mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_ACTUATOR, name) for name in CONTROL_JOINTS}
-        self.box_joint = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_JOINT, "pickup_box_free")
-        self.box_qpos = self.model.jnt_qposadr[self.box_joint]
+        self.bottle_joint = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_JOINT, "pickup_bottle_free")
+        self.bottle_qpos = self.model.jnt_qposadr[self.bottle_joint]
         self.left_tip = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_BODY, "left_hand_index_1_link")
         self.right_tip = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_BODY, "right_hand_index_1_link")
-        self.box_body = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_BODY, "pickup_box")
+        self.bottle_body = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_BODY, "pickup_bottle")
         self.target = np.zeros(len(CONTROL_JOINTS), dtype=np.float64)
         self.qpos_ids = np.asarray([self.model.jnt_qposadr[self.joint_ids[name]] for name in CONTROL_JOINTS])
         self.qvel_ids = np.asarray([self.model.jnt_dofadr[self.joint_ids[name]] for name in CONTROL_JOINTS])
@@ -80,17 +80,17 @@ class G1PickEnv(gym.Env):
         self.action_scale = np.full(len(CONTROL_JOINTS), 0.035)
         if stage == "grasp":
             # The first stage only learns contact closure/lift.  It cannot
-            # waste exploration on rotating the entire arm away from the box.
+            # waste exploration on rotating the entire arm away from the bottle.
             self.action_scale[:len(ARM_JOINTS)] = 0.0
         elif stage == "approach":
             self.action_scale[:len(ARM_JOINTS)] = 0.020
         # Target increments are safer and easier to learn than unbounded torques.
         self.action_space = spaces.Box(-1.0, 1.0, shape=(len(CONTROL_JOINTS),), dtype=np.float32)
-        # box xyz + both fingertip relative xyz + joint positions + velocities
+        # bottle xyz + both fingertip relative xyz + joint positions + velocities
         size = 3 + 6 + 2 * len(CONTROL_JOINTS)
         self.observation_space = spaces.Box(-np.inf, np.inf, shape=(size,), dtype=np.float32)
         self.step_count = 0
-        self.initial_box_z = 0.800
+        self.initial_bottle_z = 0.865
 
     def joint_position(self, name):
         return self.data.qpos[self.model.jnt_qposadr[self.joint_ids[name]]]
@@ -99,12 +99,12 @@ class G1PickEnv(gym.Env):
         return self.data.qvel[self.model.jnt_dofadr[self.joint_ids[name]]]
 
     def observation(self):
-        box = self.data.xpos[self.box_body].copy()
-        left = self.data.xpos[self.left_tip].copy() - box
-        right = self.data.xpos[self.right_tip].copy() - box
+        bottle = self.data.xpos[self.bottle_body].copy()
+        left = self.data.xpos[self.left_tip].copy() - bottle
+        right = self.data.xpos[self.right_tip].copy() - bottle
         qpos = self.data.qpos[self.qpos_ids]
         qvel = self.data.qvel[self.qvel_ids]
-        return np.asarray(np.concatenate((box, left, right, qpos, qvel)), dtype=np.float32)
+        return np.asarray(np.concatenate((bottle, left, right, qpos, qvel)), dtype=np.float32)
 
     def contacts(self):
         count = 0
@@ -113,7 +113,7 @@ class G1PickEnv(gym.Env):
             bodies = [mujoco.mj_id2name(self.model, mujoco.mjtObj.mjOBJ_BODY,
                                         self.model.geom_bodyid[geom]) or ""
                       for geom in (contact.geom1, contact.geom2)]
-            if "pickup_box" in bodies and any("_hand_" in body for body in bodies):
+            if "pickup_bottle" in bodies and any("_hand_" in body for body in bodies):
                 count += 1
         return count
 
@@ -132,11 +132,11 @@ class G1PickEnv(gym.Env):
                 self.data.qpos[self.model.jnt_qposadr[self.joint_ids[name]]] = value
         # Increase pose randomisation only after the contact skill exists.
         span = {"grasp": (0.02, 0.03), "approach": (0.06, 0.08), "full": (0.08, 0.12)}[self.stage]
-        self.data.qpos[self.box_qpos:self.box_qpos + 3] = [
-            self.np_random.uniform(0.50 - span[0], 0.50 + span[0]),
-            self.np_random.uniform(-span[1], span[1]), self.initial_box_z,
+        self.data.qpos[self.bottle_qpos:self.bottle_qpos + 3] = [
+            self.np_random.uniform(0.45 - span[0], 0.45 + span[0]),
+            self.np_random.uniform(-span[1], span[1]), self.initial_bottle_z,
         ]
-        self.data.qpos[self.box_qpos + 3:self.box_qpos + 7] = [1.0, 0.0, 0.0, 0.0]
+        self.data.qpos[self.bottle_qpos + 3:self.bottle_qpos + 7] = [1.0, 0.0, 0.0, 0.0]
         mujoco.mj_forward(self.model, self.data)
         self.target = self.data.qpos[self.qpos_ids].copy()
         self.step_count = 0
@@ -151,11 +151,11 @@ class G1PickEnv(gym.Env):
             self.apply_target()
             mujoco.mj_step(self.model, self.data)
         self.step_count += 1
-        box = self.data.xpos[self.box_body]
-        fingertip_distance = (np.linalg.norm(self.data.xpos[self.left_tip] - box) +
-                              np.linalg.norm(self.data.xpos[self.right_tip] - box))
+        bottle = self.data.xpos[self.bottle_body]
+        fingertip_distance = (np.linalg.norm(self.data.xpos[self.left_tip] - bottle) +
+                              np.linalg.norm(self.data.xpos[self.right_tip] - bottle))
         contact_count = self.contacts()
-        lifted = max(0.0, box[2] - self.initial_box_z)
+        lifted = max(0.0, bottle[2] - self.initial_bottle_z)
         # Dense hand-distance reward is the signal that takes the policy from
         # pregrasp to first contact; lift is intentionally dominant only after
         # contact has been discovered.
@@ -165,12 +165,12 @@ class G1PickEnv(gym.Env):
         reward -= 0.01 * float(np.mean(np.square(bounded_action)))
         reward -= 0.001 * float(np.mean(np.square(self.data.qvel[self.qvel_ids])))
         terminated = bool(lifted > 0.12)
-        fallen = bool(box[2] < 0.68)
+        fallen = bool(bottle[2] < 0.70)
         if fallen:
             reward -= 3.0
         truncated = self.step_count >= self.max_steps
         return self.observation(), float(reward), terminated or fallen, truncated, {
-            "contacts": contact_count, "box_height": float(box[2]), "lifted": float(lifted),
+            "contacts": contact_count, "bottle_height": float(bottle[2]), "lifted": float(lifted),
         }
 
     def close(self):

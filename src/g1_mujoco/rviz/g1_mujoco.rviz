@@ -80,7 +80,7 @@ Visualization Manager:
         Durability Policy: Volatile
         History Policy: Keep Last
         Reliability Policy: Reliable
-        Value: /g1/perception/box_marker
+        Value: /g1/perception/bottle_marker
       Value: true
     # NOTE: no rviz_default_plugins/Image display here on purpose: it
     # crashes RViz on this laptop's Mesa stack even while disabled (GLSL

@@ -1,4 +1,4 @@
-"""ROS 2 adapter for a contact-only MuJoCo G1 DEX3-1 tabletop scene."""
+"""ROS 2 adapter for the stationary MuJoCo G1 DEX3-1 bottle pick scene."""
 from pathlib import Path
 import math
 import os
@@ -238,31 +238,28 @@ class G1Mujoco(Node):
         self.declare_parameter("walk_policy_onnx", UNITREE29_POLICY_PATH)
         self.declare_parameter("cmd_vel_topic", "/cmd_vel")
         self.declare_parameter("smoothed_cmd_vel_topic", "/cmd_vel_smoothed")
-        self.declare_parameter("box_x", 0.40)
-        self.declare_parameter("box_y", 0.0)
-        self.declare_parameter("box_yaw", 0.0)
-        self.declare_parameter("box_side_rails", False)
+        self.declare_parameter("bottle_x", 0.42)
+        self.declare_parameter("bottle_y", 0.0)
+        self.declare_parameter("bottle_yaw", 0.0)
+        self.declare_parameter("bottle_diameter", 0.062)
+        self.declare_parameter("bottle_height", 0.235)
         self.tabletop_pick = bool(self.get_parameter("tabletop_pick").value)
         self.walk = bool(self.get_parameter("walk").value)
         self.viewer_lite = bool(self.get_parameter("viewer_lite").value)
-        rails = bool(self.get_parameter("box_side_rails").value)
+        if self.tabletop_pick and self.walk:
+            raise RuntimeError(
+                "The bottle pick scene is stationary: walk:=true is not supported "
+                "together with tabletop_pick:=true")
         if self.tabletop_pick:
-            if self.walk:
-                # Combined mode: locomotion contacts plus the physical tabletop
-                # so the robot can walk between the tables while still grasping.
-                scene_file = ("g1_29dof_with_dex3_tabletop_rails_walk.xml" if rails
-                              else "g1_29dof_with_dex3_tabletop_walk.xml")
-            else:
-                scene_file = ("g1_29dof_with_dex3_tabletop_rails.xml" if rails
-                              else "g1_29dof_with_dex3_tabletop.xml")
+            scene_file = "g1_29dof_with_dex3_bottle.xml"
         else:
             scene_file = "g1_29dof_with_dex3_nav.xml"
         description = Path(os.environ.get("G1_DESCRIPTION_DIR", "/opt/unitree_ros/robots/g1_description"))
         scene_path = str(description / scene_file)
         temporary_scene_paths = []
         if self.walk and not self.tabletop_pick:
-            # The nav walk scene rewrites obstacle contact masks; the combined
-            # tabletop+walk scene is generated with the correct masks instead.
+            # The nav walk scene rewrites obstacle contact masks.  The bottle
+            # pick scene is deliberately stationary and never uses this path.
             scene_path = self.build_walk_scene(scene_path)
             temporary_scene_paths.append(scene_path)
         if self.viewer_lite:
@@ -275,7 +272,7 @@ class G1Mujoco(Node):
                     self.model, mujoco.mjtObj.mjOBJ_BODY,
                     self.model.geom_bodyid[geom_id]) or ""
                 if "_hand_" in body:
-                    self.model.geom_friction[geom_id, 0] = 4.0
+                    self.model.geom_friction[geom_id, 0] = 6.0
         for temporary_scene_path in reversed(temporary_scene_paths):
             try:
                 os.unlink(temporary_scene_path)
@@ -311,20 +308,24 @@ class G1Mujoco(Node):
         # for both kinematic and walking navigation.
         for name, position in ARMS_AT_SIDES.items():
             self.data.qpos[self.model.jnt_qposadr[self.joint_ids[name]]] = position
-        self.box_joint_id = mujoco.mj_name2id(
-            self.model, mujoco.mjtObj.mjOBJ_JOINT, "pickup_box_free")
-        self.box_body_id = mujoco.mj_name2id(
-            self.model, mujoco.mjtObj.mjOBJ_BODY, "pickup_box")
-        self.box_dofadr = (int(self.model.jnt_dofadr[self.box_joint_id])
-                           if self.box_joint_id >= 0 else None)
-        self.last_box_log_time = 0.0
-        if self.tabletop_pick and self.box_joint_id >= 0:
-            qadr = int(self.model.jnt_qposadr[self.box_joint_id])
-            yaw = float(self.get_parameter("box_yaw").value)
-            box_z = float(self.data.qpos[qadr + 2])
+        self.bottle_joint_id = mujoco.mj_name2id(
+            self.model, mujoco.mjtObj.mjOBJ_JOINT, "pickup_bottle_free")
+        self.bottle_body_id = mujoco.mj_name2id(
+            self.model, mujoco.mjtObj.mjOBJ_BODY, "pickup_bottle")
+        self.bottle_qadr = (int(self.model.jnt_qposadr[self.bottle_joint_id])
+                            if self.bottle_joint_id >= 0 else None)
+        self.bottle_rest_z = (float(self.data.qpos[self.bottle_qadr + 2])
+                              if self.bottle_qadr is not None else None)
+        self.bottle_dofadr = (int(self.model.jnt_dofadr[self.bottle_joint_id])
+                              if self.bottle_joint_id >= 0 else None)
+        self.last_bottle_log_time = 0.0
+        if self.tabletop_pick and self.bottle_joint_id >= 0:
+            qadr = int(self.model.jnt_qposadr[self.bottle_joint_id])
+            yaw = float(self.get_parameter("bottle_yaw").value)
+            bottle_z = float(self.data.qpos[qadr + 2])
             self.data.qpos[qadr:qadr + 7] = [
-                float(self.get_parameter("box_x").value),
-                float(self.get_parameter("box_y").value), box_z,
+                float(self.get_parameter("bottle_x").value),
+                float(self.get_parameter("bottle_y").value), bottle_z,
                 *yaw_to_mujoco_quaternion(yaw),
             ]
         if self.walk:
@@ -369,7 +370,7 @@ class G1Mujoco(Node):
         # effort the clamped torque written to ctrl.  It lets an offline trial
         # separate "target moved" from "actuator could not hold the target".
         self.target_pub = self.create_publisher(JointState, "/g1/joint_targets", 10)
-        self.contacts_pub = self.create_publisher(Int32, "/g1/mujoco/hand_box_contacts", 10)
+        self.contacts_pub = self.create_publisher(Int32, "/g1/mujoco/hand_bottle_contacts", 10)
         self.grasp_pub = self.create_publisher(Bool, "/g1/mujoco/physical_grasp", 10)
         # Perception only needs the RGB-D stream until a pick is planned.  The
         # controller turns rendering off with this topic so the contact
@@ -377,8 +378,8 @@ class G1Mujoco(Node):
         self.camera_enabled = True
         self.create_subscription(Bool, "/g1/mujoco/camera_enable",
                                  self.set_camera_enabled, 10)
-        self.box_truth_pub = self.create_publisher(
-            PoseStamped, "/g1/mujoco/evaluation/box_ground_truth", 10)
+        self.bottle_truth_pub = self.create_publisher(
+            PoseStamped, "/g1/mujoco/evaluation/bottle_ground_truth", 10)
         # True floating-base pose for evaluation.  /odom is planar (z=0, yaw
         # only), so an offline renderer cannot reconstruct hand/box geometry
         # during walking from odom alone.
@@ -440,7 +441,7 @@ class G1Mujoco(Node):
                 f"locomotion policy, scene={scene_file}")
         else:
             self.get_logger().info(
-                "MuJoCo DEX3 contact simulation: no attach or weld is used for pickup_box; "
+                "MuJoCo DEX3 bottle simulation: real contact grasp attempt, no carry lock; "
                 f"scene={scene_file}; Nav2 base motion is published kinematically as "
                 "odom -> base_footprint, with base_footprint -> pelvis lifting the visual model")
         if self.nav_blockers:
@@ -496,7 +497,7 @@ class G1Mujoco(Node):
             if self.model.geom_type[geom_id] != mujoco.mjtGeom.mjGEOM_BOX:
                 continue
             name = mujoco.mj_id2name(self.model, mujoco.mjtObj.mjOBJ_GEOM, geom_id) or f"geom_{geom_id}"
-            if not (name == "table_top" or name == "pickup_box_geom" or name.startswith("nav_wall_")):
+            if not (name == "table_top" or name.startswith("nav_wall_")):
                 continue
             center = self.data.geom_xpos[geom_id].copy()
             size = self.model.geom_size[geom_id].copy()
@@ -517,7 +518,7 @@ class G1Mujoco(Node):
             if self.model.geom_type[geom_id] != mujoco.mjtGeom.mjGEOM_BOX:
                 continue
             name = mujoco.mj_id2name(self.model, mujoco.mjtObj.mjOBJ_GEOM, geom_id) or f"geom_{geom_id}"
-            if not (name == "table_top" or name == "pickup_box_geom" or name.startswith("nav_wall_")):
+            if not (name == "table_top" or name.startswith("nav_wall_")):
                 continue
             center = self.data.geom_xpos[geom_id].copy()
             size = self.model.geom_size[geom_id].copy()
@@ -580,7 +581,7 @@ class G1Mujoco(Node):
             "group": WALK_GUARD_GROUP,
             "rgba": "0.1 0.6 1.0 0.18",
         })
-        # In the nav scene the walls/table/box are scan-only (masks 0/0):
+        # In the nav scene the walls/table are scan-only (masks 0/0):
         # the kinematic base was stopped by the AABB guard, but a walking
         # policy can physically drift straight through them.  Give obstacles
         # a guard-only mask: they stop the base guard, while arms/hands keep
@@ -589,8 +590,7 @@ class G1Mujoco(Node):
         if world is not None:
             for geom in world.iter("geom"):
                 name = geom.get("name", "")
-                if (name.startswith("nav_wall_") or name == "table_top"
-                        or name == "pickup_box_geom"):
+                if (name.startswith("nav_wall_") or name == "table_top"):
                     geom.set("contype", WALK_OBSTACLE_CONTYPE)
                     geom.set("conaffinity", WALK_OBSTACLE_CONAFFINITY)
         destination = source + ".walk.tmp.xml"
@@ -1192,8 +1192,8 @@ class G1Mujoco(Node):
             for name, actuator in self.actuator_ids.items():
                 finger = "_hand_" in name
                 if self.tabletop_pick:
-                    kp, kd = (12.0, 0.45) if finger else (80.0, 3.0)
-                    limit = 3.0 if finger else 35.0
+                    kp, kd = (6.0, 0.30) if finger else (80.0, 3.0)
+                    limit = 1.5 if finger else 35.0
                 else:
                     kp, kd = (3.0, 0.18) if finger else (35.0, 1.8)
                     limit = 0.9 if finger else 18.0
@@ -1208,13 +1208,13 @@ class G1Mujoco(Node):
             self.apply_base_pose()
         mujoco.mj_forward(self.model, self.data)
         self.step_count += 1
-        if self.tabletop_pick and self.box_dofadr is not None:
+        if self.tabletop_pick and self.bottle_dofadr is not None:
             speed = float(np.linalg.norm(
-                self.data.qvel[self.box_dofadr:self.box_dofadr + 3]))
+                self.data.qvel[self.bottle_dofadr:self.bottle_dofadr + 3]))
             if speed > 2.0:
                 now_sec = self.get_clock().now().nanoseconds * 1e-9
-                if now_sec - self.last_box_log_time > 0.5:
-                    self.last_box_log_time = now_sec
+                if now_sec - self.last_bottle_log_time > 0.5:
+                    self.last_bottle_log_time = now_sec
                     pairs = []
                     for index in range(self.data.ncon):
                         contact = self.data.contact[index]
@@ -1222,10 +1222,10 @@ class G1Mujoco(Node):
                             self.model, mujoco.mjtObj.mjOBJ_BODY,
                             self.model.geom_bodyid[geom]) or ""
                             for geom in (contact.geom1, contact.geom2)]
-                        if "pickup_box" in bodies:
+                        if "pickup_bottle" in bodies:
                             pairs.append((bodies[0], bodies[1], round(float(contact.dist), 4)))
                     self.get_logger().warn(
-                        f"box speed {speed:.1f} m/s at {self.data.xpos[self.box_body_id].round(3).tolist()} "
+                        f"bottle speed {speed:.1f} m/s at {self.data.xpos[self.bottle_body_id].round(3).tolist()} "
                         f"base=({self.base_x:.3f},{self.base_y:.3f},{self.base_yaw:.2f}) contacts={pairs[:8]}")
         if (self.walk and self.walk_backend != "unitree29"
                 and self.step_count % WALK_CONTROL_DECIMATION == 0):
@@ -1538,23 +1538,23 @@ class G1Mujoco(Node):
             bodies = [mujoco.mj_id2name(self.model, mujoco.mjtObj.mjOBJ_BODY,
                                         self.model.geom_bodyid[geom]) or ""
                       for geom in (contact.geom1, contact.geom2)]
-            if "pickup_box" in bodies and any("_hand_" in body for body in bodies):
+            if "pickup_bottle" in bodies and any("_hand_" in body for body in bodies):
                 contacts += 1
         self.contacts_pub.publish(Int32(data=contacts))
         # At least two distinct contact points is a measurable contact grasp
         # signal. It does not alter physics or attach the object.
         self.grasp_pub.publish(Bool(data=contacts >= 2))
-        if self.tabletop_pick and self.box_body_id >= 0:
+        if self.tabletop_pick and self.bottle_body_id >= 0:
             truth = PoseStamped()
             truth.header.stamp, truth.header.frame_id = stamp, "odom"
-            position = self.data.xpos[self.box_body_id]
-            quaternion = self.data.xquat[self.box_body_id]  # MuJoCo w,x,y,z
+            position = self.data.xpos[self.bottle_body_id]
+            quaternion = self.data.xquat[self.bottle_body_id]  # MuJoCo w,x,y,z
             truth.pose.position.x, truth.pose.position.y, truth.pose.position.z = map(float, position)
             truth.pose.orientation.w = float(quaternion[0])
             truth.pose.orientation.x = float(quaternion[1])
             truth.pose.orientation.y = float(quaternion[2])
             truth.pose.orientation.z = float(quaternion[3])
-            self.box_truth_pub.publish(truth)
+            self.bottle_truth_pub.publish(truth)
         if self.base_qposadr is not None:
             base = PoseStamped()
             base.header.stamp, base.header.frame_id = stamp, "odom"

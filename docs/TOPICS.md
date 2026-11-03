@@ -5,7 +5,7 @@
 | Name | Type | Meaning |
 |---|---|---|
 | `lowstate` | `unitree_hg/msg/LowState` | Native G1 joint and torso IMU state |
-| `/cmd_vel` | `geometry_msgs/msg/Twist` | Requested walking velocity in the robot body frame |
+| `/g1/motion_cmd_vel` | `geometry_msgs/msg/Twist` | Requested walking velocity in the robot body frame (physical motion launch) |
 | `/g1/enable_control` | `std_srvs/srv/SetBool` | Explicitly arm or disarm motion commands |
 
 Only `linear.x`, `linear.y`, and `angular.z` are used from `/cmd_vel`. Each value is clamped by the configured limit.
@@ -25,6 +25,9 @@ Only `linear.x`, `linear.y`, and `angular.z` are used from `/cmd_vel`. Each valu
 | `/mid360/points_rviz` | `sensor_msgs/msg/PointCloud2` | Reduced physical cloud for reliable laptop visualization |
 | `/scan` | `sensor_msgs/msg/LaserScan` | Passive filtered 2-D projection of physical `/mid360/points` |
 | `/map` | `nav_msgs/msg/OccupancyGrid` | Online map from `hardware_mapping.launch.py` |
+| `/g1/perception/bottle_pose` | `geometry_msgs/msg/PoseStamped` | MuJoCo RGB-D bottle centre for the stationary pick |
+| `/g1/perception/bottle_size` | `geometry_msgs/msg/Vector3Stamped` | Estimated bottle size: x=diameter, y=height, z=confidence |
+| `/g1/mujoco/hand_bottle_contacts` | `std_msgs/msg/Int32` | Observed hand–bottle contact count in MuJoCo |
 
 ## Safety behavior
 
@@ -81,7 +84,9 @@ physical G1 bridge:
 
 The physical Mid-360 and physical odometry need hardware-specific drivers and
 must not be replaced with these simulation sources. In MuJoCo, `/cmd_vel` is a
-navigation-interface test path rather than a dynamic walking controller.
+navigation-interface test path rather than a dynamic walking controller. The
+stationary bottle pick does not use `/cmd_vel` at all; it commands arm joints and
+DEX3 hands directly and starts from `/g1/pick/start`.
 
 When MuJoCo is launched with `loco_api:=true`, `g1_loco_api_sim` accepts a
 small hardware-compatible subset of G1 LocoClient requests: FSM/state queries,

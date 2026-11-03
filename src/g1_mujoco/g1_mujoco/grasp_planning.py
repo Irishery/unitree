@@ -1,15 +1,15 @@
-"""Kinematics, IK and grasp target planning for the bimanual DEX3 pick task.
+"""Kinematics, IK and grasp target planning for the single-arm bottle task.
 
 The planner is deliberately free of ROS and of live simulator state: it owns a
-private read-only MuJoCo model used only for forward kinematics, Jacobians and
-collision-distance queries.  A hardware deployment swaps this class for a
-URDF-based kinematics provider with the same interface; the scenario logic in
-dual_pick_controller.py never touches simulator signals directly.
+private read-only MuJoCo model used only for forward kinematics and Jacobians.
+The bottle stands upright on the table; one selected hand approaches from the
+side, closes around the body and lifts it.  The robot base is stationary for
+the whole sequence.
 """
-from dataclasses import dataclass, field, replace
-from pathlib import Path
-import os
+from dataclasses import dataclass
 import math
+import os
+from pathlib import Path
 
 import mujoco
 import numpy as np
@@ -29,8 +29,6 @@ HAND_JOINTS = {
               "right_hand_middle_0_joint", "right_hand_middle_1_joint",
               "right_hand_index_0_joint", "right_hand_index_1_joint"],
 }
-# Waist and base are held at their zero pose by the executor in the tabletop
-# stand; the planner needs the same assumptions for consistent IK.
 WAIST_JOINTS = ["waist_yaw_joint", "waist_roll_joint", "waist_pitch_joint"]
 BASE_POSE = np.array([0.0, 0.0, 0.793, 1.0, 0.0, 0.0, 0.0])
 
@@ -44,134 +42,56 @@ POSTURE_BIAS = {
 MAX_IK_ITERS = 300
 IK_POS_TOL = 3.0e-3
 IK_ROT_TOL = 4.0 * math.pi / 180.0
-# Intermediate outside-the-box waypoints may lie a few millimetres beyond the
-# exact 6D workspace of a straight wrist.  The final grasp solutions remain
-# below the stricter IK_POS_TOL whenever reachable.
 IK_POS_ACCEPT = 60.0e-3
 IK_ROT_ACCEPT = 15.0 * math.pi / 180.0
 IK_STEP_MAX = 0.12
-CLEARANCE_MARGIN = 8.0e-3
 
 # Shared joint-range cache filled by GraspKinematics so pure helpers such as
 # finger_targets can clamp without loading their own model.
 JOINT_RANGES = {}
 
-# Upright palm frame for the broad side clamp.  The DEX3 palm and both straight
-# fingers lie in the local X-Z plane, so local Y is the side-face normal.  The
-# right-hand meshes are already mirrored in MJCF and use the same wrist frame.
-BASELINE_WRIST_AXES = {
-    "left": {
-        "x": (1.0, 0.0, 0.0),
-        "y": (0.0, 0.984808, 0.173648),
-        "z": (0.0, -0.173648, 0.984808),
-    },
-    "right": {
-        "x": (1.0, 0.0, 0.0),
-        "y": (0.0, 0.984808, -0.173648),
-        "z": (0.0, 0.173648, 0.984808),
-    },
-}
-
-# While the hands travel past the front edge, cant the top of each palm away
-# from the box.  This makes room for the DEX3 thumb, whose open linkage still
-# projects inward.  The final lateral slide simultaneously returns the palms
-# to the near-upright frame above.
-APPROACH_WRIST_AXES = {
-    "left": {
-        "x": (1.0, 0.0, 0.0),
-        "y": (0.0, 0.866025, -0.5),
-        "z": (0.0, 0.5, 0.866025),
-    },
-    "right": {
-        "x": (1.0, 0.0, 0.0),
-        "y": (0.0, 0.866025, 0.5),
-        "z": (0.0, -0.5, 0.866025),
-    },
-}
-
-
-def axis_angle_from_matrix(rotation):
-    trace = np.clip((np.trace(rotation) - 1.0) * 0.5, -1.0, 1.0)
-    angle = math.acos(float(trace))
-    if angle < 1e-9:
-        return np.zeros(3)
-    if angle > math.pi - 1e-6:
-        # Near pi: use the symmetric part to recover the axis.
-        column = 0.5 * (np.diag(rotation) + np.ones(3))
-        axis = np.sqrt(np.clip(column, 0.0, None))
-        if rotation[0, 1] < 0.0:
-            axis[1] *= -1.0
-        if rotation[0, 2] < 0.0:
-            axis[2] *= -1.0
-        return axis * angle
-    axis = np.array([rotation[2, 1] - rotation[1, 2],
-                     rotation[0, 2] - rotation[2, 0],
-                     rotation[1, 0] - rotation[0, 1]]) / (2.0 * math.sin(angle))
-    return axis * angle
-
-
-def rotation_from_axes(x_axis, y_axis, z_axis):
-    rotation = np.column_stack((x_axis, y_axis, z_axis))
-    u, _, vt = np.linalg.svd(rotation)
-    return u @ vt
-
-
-def blend_rotation(start, end, alpha):
-    """Project a short linear SO(3) blend back onto a rotation matrix."""
-    u, _, vt = np.linalg.svd((1.0 - alpha) * start + alpha * end)
-    rotation = u @ vt
-    if np.linalg.det(rotation) < 0.0:
-        u[:, -1] *= -1.0
-        rotation = u @ vt
-    return rotation
-
-
-def yaw_quaternion(yaw):
-    half = 0.5 * yaw
-    return np.array([math.cos(half), 0.0, 0.0, math.sin(half)])
+# Known bottle of the tabletop scene, metres.
+BOTTLE_DIAMETER = 0.062
+BOTTLE_HEIGHT = 0.235
 
 
 @dataclass
 class GraspParams:
-    """Tuned grasp geometry; all offsets are in the box frame, metres."""
-    box_dims: tuple = (0.150, 0.250, 0.140)
-    fingertip_reach: float = 0.150        # straight thumb on the short front panel
-    approach_reach: float = 0.170         # keep thumb ahead of front edge until side entry
-    lateral_beyond_face: float = 0.010    # initial broad-palm contact before arm preload
-    rise_above_top: float = -0.024        # palm centre below the top edge
-    approach_standoff: float = 0.10       # clears the inward-projecting open thumb
-    hover_standoff: float = 0.10          # stay fully outside during the forward alignment
-    align_standoff: float = 0.06          # shift forward while still clear of the side face
-    arm_preload: float = 0.030            # symmetric whole-hand squeeze after finger seating
-    front_seat: float = 0.0               # no longitudinal push after contact
-    # Symmetric correction of the calibrated 10-degree wrist roll.  A value
-    # of 10 makes both palms exactly upright (90 degrees to the table).
-    palm_tilt_deg: float = 10.0
-    lift_height: float = 0.116            # produces 11.4 cm held object rise in the tuned grip
-    # Follow the small forward motion caused by transferring the free box's
-    # weight from the table to the compliant hands.  This keeps the straight
-    # thumb/front-palm support on the front panel during lift.
-    lift_forward: float = 0.034
-    lift_pitch_deg: float = 0.0          # in-plane wrist pitch applied during lift
-    lift_elbow_min: float = 0.0          # do not reverse the elbow branch during carrying
-    hold_pitch_deg: float = -8.0        # lean onto the straight thumbs so the box does not hang on the rails
-    finger_close_scale: float = 1.0
-    # Do not re-squeeze after the box is airborne.  Even another 5 mm per hand
-    # drove the already loaded rigid contacts to about 30 mm penetration; the
-    # solver then expelled the box roughly 78 mm downward.  The 30 mm preload
-    # established before lift remains active throughout transport.
-    transport_squeeze: float = 0.0
-    transport_finger_scale: float = 1.0
-    transport_pitch_deg: float = -8.0
+    """Tuned bottle grasp geometry; offsets are in the bottle frame, metres."""
+
+    bottle_diameter: float = BOTTLE_DIAMETER
+    bottle_height: float = BOTTLE_HEIGHT
+    # Wrist origin sits this far behind the bottle axis.  The straight fingers
+    # then reach past the cylinder and curl around its side.
+    fingertip_reach: float = 0.160
+    # Wrist y is radius + this clearance.  A small inward preload gives the
+    # palms a compliant contact before the fingers close.
+    lateral_clearance: float = 0.011
+    # Wrist height relative to the bottle-body centre.
+    grasp_height_offset: float = 0.000
+    # Approach is split into a straight move and a small lateral seat.  Keeping
+    # the open fingers outside the bottle avoids knocking it over on entry.
+    approach_distance: float = 0.120
+    hover_distance: float = 0.050
+    approach_side_clearance: float = 0.080
+    # Finger closure scale; 0.95 leaves the compliant DEX3 pads just short of
+    # the hard joint stops while still wrapping the 100 mm body.
+    finger_close_scale: float = 0.95
+    arm_preload: float = 0.0
+    lift_height: float = 0.100
+    lift_forward: float = 0.0
+    clear_height: float = 0.120
+    clear_back: float = 0.050
 
 
 class GraspKinematics:
     """Read-only kinematic model shared by planning and the scenario node."""
 
     def __init__(self, model_path=None):
-        description = Path(os.environ.get("G1_DESCRIPTION_DIR", "/opt/unitree_ros/robots/g1_description"))
+        description = Path(os.environ.get(
+            "G1_DESCRIPTION_DIR", "/opt/unitree_ros/robots/g1_description"))
         path = str(model_path or os.environ.get("G1_MUJOCO_MODEL")
-                   or description / "g1_29dof_with_dex3_tabletop.xml")
+                   or description / "g1_29dof_with_dex3_bottle.xml")
         self.model = mujoco.MjModel.from_xml_path(path)
         self.data = mujoco.MjData(self.model)
         self.joint_ids = {}
@@ -184,7 +104,8 @@ class GraspKinematics:
                 self.joint_ids[name] = jid
                 self.qadr[name] = int(self.model.jnt_qposadr[jid])
                 self.vadr[name] = int(self.model.jnt_dofadr[jid])
-                self.ranges[name] = (float(self.model.jnt_range[jid, 0]), float(self.model.jnt_range[jid, 1]))
+                self.ranges[name] = (float(self.model.jnt_range[jid, 0]),
+                                     float(self.model.jnt_range[jid, 1]))
                 JOINT_RANGES[name] = self.ranges[name]
         for name in WAIST_JOINTS:
             jid = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_JOINT, name)
@@ -192,12 +113,18 @@ class GraspKinematics:
                 self.joint_ids[name] = jid
                 self.qadr[name] = int(self.model.jnt_qposadr[jid])
         self.wrist_ids = {
-            side: mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_BODY, f"{side}_wrist_yaw_link")
+            side: mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_BODY,
+                                    f"{side}_wrist_yaw_link")
             for side in ("left", "right")
         }
-        box_joint = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_JOINT, "pickup_box_free")
-        self.box_qadr = int(self.model.jnt_qposadr[box_joint])
-        self.box_body = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_BODY, "pickup_box")
+        bottle_joint = mujoco.mj_name2id(
+            self.model, mujoco.mjtObj.mjOBJ_JOINT, "pickup_bottle_free")
+        if bottle_joint < 0:
+            raise RuntimeError("bottle scene has no pickup_bottle_free joint")
+        self.bottle_qadr = int(self.model.jnt_qposadr[bottle_joint])
+        self.bottle_dofadr = int(self.model.jnt_dofadr[bottle_joint])
+        self.bottle_body = mujoco.mj_name2id(
+            self.model, mujoco.mjtObj.mjOBJ_BODY, "pickup_bottle")
         self._build_collision_pairs()
         self.reset_state()
 
@@ -211,14 +138,15 @@ class GraspKinematics:
             contype = int(self.model.geom_contype[geom_id])
             conaffinity = int(self.model.geom_conaffinity[geom_id])
             if contype == 0 and conaffinity == 0:
-                continue  # visual-only geom
+                continue
             geoms.append(geom_id)
         return geoms
 
     def _build_collision_pairs(self):
         def arm_of(body):
             for side in ("left", "right"):
-                if any(body.startswith(f"{side}_{part}") for part in ("shoulder", "elbow", "wrist", "hand")):
+                if any(body.startswith(f"{side}_{part}")
+                       for part in ("shoulder", "elbow", "wrist", "hand")):
                     return side
             return None
 
@@ -226,11 +154,11 @@ class GraspKinematics:
         right = self._collision_geoms(lambda b: arm_of(b) == "right")
         robot_rest = self._collision_geoms(lambda b: arm_of(b) is None and b not in ("world",))
         table = [mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_GEOM, "table_top")]
-        box = self._collision_geoms(lambda body: body == "pickup_box")
+        bottle = self._collision_geoms(lambda body: body == "pickup_bottle")
         self.clearance_pairs = []
         for side_geoms, other_geoms, label in (
-            (left, right + robot_rest + table + box, "left-vs-rest"),
-            (right, left + robot_rest + table + box, "right-vs-rest"),
+            (left, right + robot_rest + table + bottle, "left-vs-rest"),
+            (right, left + robot_rest + table + bottle, "right-vs-rest"),
             (left + right, robot_rest, "arms-vs-body"),
         ):
             self.clearance_pairs.append((side_geoms, other_geoms, label))
@@ -251,9 +179,11 @@ class GraspKinematics:
             self.set_joint(name, value)
         mujoco.mj_forward(self.model, self.data)
 
-    def set_box(self, centre, yaw):
-        self.data.qpos[self.box_qadr:self.box_qadr + 3] = centre
-        self.data.qpos[self.box_qadr + 3:self.box_qadr + 7] = yaw_quaternion(yaw)
+    def set_bottle(self, centre, yaw=0.0):
+        self.data.qpos[self.bottle_qadr:self.bottle_qadr + 3] = centre
+        half = 0.5 * float(yaw)
+        self.data.qpos[self.bottle_qadr + 3:self.bottle_qadr + 7] = [
+            math.cos(half), 0.0, 0.0, math.sin(half)]
         mujoco.mj_forward(self.model, self.data)
 
     def wrist_pose(self, side):
@@ -262,20 +192,6 @@ class GraspKinematics:
 
     def arm_positions(self, side):
         return np.array([self.data.qpos[self.qadr[name]] for name in ARM_JOINTS[side]])
-
-    def min_clearance(self, distmax=0.08):
-        mujoco.mj_forward(self.model, self.data)
-        worst = distmax
-        label = None
-        for geoms_a, geoms_b, name in self.clearance_pairs:
-            for g1 in geoms_a:
-                for g2 in geoms_b:
-                    if g1 == g2:
-                        continue
-                    distance = mujoco.mj_geomDistance(self.model, self.data, g1, g2, distmax)
-                    if distance < worst:
-                        worst, label = distance, name
-        return worst, label
 
     def solve_arm_ik(self, side, target_pos, target_rot, q_init=None,
                      joint_bounds=None):
@@ -332,7 +248,6 @@ class GraspKinematics:
             jjt = jacobian @ jacobian.T
             damping = 0.01 + 0.4 * max(0.0, pos_norm - 0.05)
             dq = jacobian.T @ np.linalg.solve(jjt + (damping ** 2) * np.eye(6), e)
-            # Nullspace pull toward the posture bias.
             jacobian_pinv = jacobian.T @ np.linalg.inv(jjt + (damping ** 2) * np.eye(6))
             nullspace = np.eye(7) - jacobian_pinv @ jacobian
             dq += nullspace @ (0.02 * (np.asarray(POSTURE_BIAS[side]) - q))
@@ -353,14 +268,29 @@ class GraspKinematics:
         raise RuntimeError(f"{side} arm IK did not converge: residual {residual}")
 
 
-def rotation_z(angle):
-    cos, sin = math.cos(angle), math.sin(angle)
-    return np.array([[cos, -sin, 0.0], [sin, cos, 0.0], [0.0, 0.0, 1.0]])
+def axis_angle_from_matrix(rotation):
+    trace = np.clip((np.trace(rotation) - 1.0) * 0.5, -1.0, 1.0)
+    angle = math.acos(float(trace))
+    if angle < 1e-9:
+        return np.zeros(3)
+    if angle > math.pi - 1e-6:
+        column = 0.5 * (np.diag(rotation) + np.ones(3))
+        axis = np.sqrt(np.clip(column, 0.0, None))
+        if rotation[0, 1] < 0.0:
+            axis[1] *= -1.0
+        if rotation[0, 2] < 0.0:
+            axis[2] *= -1.0
+        return axis * angle
+    axis = np.array([rotation[2, 1] - rotation[1, 2],
+                     rotation[0, 2] - rotation[2, 0],
+                     rotation[1, 0] - rotation[0, 1]]) / (2.0 * math.sin(angle))
+    return axis * angle
 
 
-def rotation_x(angle):
-    cos, sin = math.cos(angle), math.sin(angle)
-    return np.array([[1.0, 0.0, 0.0], [0.0, cos, -sin], [0.0, sin, cos]])
+def rotation_from_axes(x_axis, y_axis, z_axis):
+    rotation = np.column_stack((x_axis, y_axis, z_axis))
+    u, _, vt = np.linalg.svd(rotation)
+    return u @ vt
 
 
 def rotation_y(angle):
@@ -368,101 +298,64 @@ def rotation_y(angle):
     return np.array([[cos, 0.0, sin], [0.0, 1.0, 0.0], [-sin, 0.0, cos]])
 
 
-def grasp_frames(box_centre, yaw, params: GraspParams):
-    """Return per-side SE3 wrist targets for pregrasp/hover/grasp/lift poses.
+def grasp_frames(bottle_centre, yaw, params: GraspParams):
+    """Return per-side SE3 wrist targets for the stationary bottle grasp.
 
-    Each wrist is placed at a front corner.  The thumb wraps onto the front
-    face (towards the robot) while index and middle fingers stay on the two
-    opposing side faces.  This gives the box a symmetric clamp without using
-    the lower edges as hooks.
+    Both wrists stay at the same height and approach along the table's +X
+    direction.  The palms face inward, the straight index/middle fingers close
+    around the cylinder, and the thumbs support the near side.
     """
     cos, sin = math.cos(yaw), math.sin(yaw)
-    long_axis = np.array([-sin, cos, 0.0])   # face normals: +/- long axis
-    short_axis = np.array([cos, sin, 0.0])   # along the pressed face
+    approach = np.array([cos, sin, 0.0])
+    lateral = np.array([-sin, cos, 0.0])
     up = np.array([0.0, 0.0, 1.0])
-    yaw_rotation = np.array([[cos, -sin, 0.0], [sin, cos, 0.0], [0.0, 0.0, 1.0]])
+    yaw_rotation = np.array([[cos, -sin, 0.0],
+                             [sin, cos, 0.0],
+                             [0.0, 0.0, 1.0]])
     frames = {}
     for side, sign in (("left", 1.0), ("right", -1.0)):
-        outward = sign * long_axis          # face normal pointing to this hand
-        axes = BASELINE_WRIST_AXES[side]
-        rotation = yaw_rotation @ rotation_from_axes(
-            np.asarray(axes["x"]), np.asarray(axes["y"]), np.asarray(axes["z"]))
-        rotation = rotation @ rotation_x(
-            -sign * math.radians(params.palm_tilt_deg))
-        approach_axes = APPROACH_WRIST_AXES[side]
-        approach_rotation = yaw_rotation @ rotation_from_axes(
-            np.asarray(approach_axes["x"]), np.asarray(approach_axes["y"]),
-            np.asarray(approach_axes["z"]))
-        wrist_base = (box_centre
-                      + outward * (0.5 * params.box_dims[1] + params.lateral_beyond_face)
-                      + up * params.rise_above_top
-                      - short_axis * params.fingertip_reach)
-        approach_base = (box_centre
-                         + outward * (0.5 * params.box_dims[1]
-                                       + params.lateral_beyond_face)
-                         + up * max(params.rise_above_top, 0.020)
-                         - short_axis * params.approach_reach)
+        outward = sign * lateral
+        wrist_base = (bottle_centre
+                      + outward * (0.5 * params.bottle_diameter + params.lateral_clearance)
+                      + up * params.grasp_height_offset
+                      - approach * params.fingertip_reach)
         frames[side] = {
-            "rotation": rotation,
-            "approach_rotation": approach_rotation,
+            "rotation": yaw_rotation,
             "outward": outward,
-            # Reach the final palm height while still outside the box, then
-            # approach horizontally.  A diagonal descent makes the straight
-            # fingers land on the top face before the palms reach the sides.
-            "pregrasp": (approach_base - short_axis * 0.08
-                         + outward * params.approach_standoff),
-            # Advance along the box while still outside its side face.  The
-            # final hover-to-grasp motion is purely lateral, perpendicular to
-            # that face, so the wrist cannot shove the front edge away.
-            "hover": approach_base + outward * params.hover_standoff,
-            # Descend here with the palm canted away from the box.  After a
-            # horizontal entry at this height, the wrist rotates upright at
-            # the side face; the open thumb never crosses the top-front edge.
-            "outside_grasp": wrist_base + outward * params.align_standoff,
+            "pregrasp": (wrist_base
+                         - approach * params.approach_distance
+                         + outward * params.approach_side_clearance),
+            "hover": (wrist_base
+                      - approach * params.hover_distance
+                      + outward * params.approach_side_clearance),
+            "align": wrist_base + outward * params.approach_side_clearance,
             "grasp": wrist_base,
             "clamp": wrist_base - outward * params.arm_preload,
-            "carry": (wrist_base - outward * params.arm_preload
-                      + short_axis * params.front_seat),
             "lift": (wrist_base - outward * params.arm_preload
-                     + short_axis * (params.front_seat + params.lift_forward)
+                     + approach * params.lift_forward
                      + up * params.lift_height),
+            "clear": (wrist_base - approach * params.clear_back
+                      + up * params.clear_height),
         }
     return frames
 
 
-def finger_targets(side, scale, params: GraspParams):
-    """Mirrored DEX3 corner-grip targets clamped to official joint ranges.
-
-    Joint order is thumb yaw/flex/flex, middle flex/flex, index flex/flex.
-    The thumb yaw puts its distal pad on the front panel.  The deliberately
-    shallower index and middle curls keep both fingers on the side panel and
-    prevent them from becoming hooks under the box.
-    """
-    if not JOINT_RANGES:
-        GraspKinematics()
-    mirror = 1.0 if side == "left" else -1.0
-    # thumb_0 has the same sign on both DEX3 hands; the remaining flexion
-    # joints are mirrored.  Treating the whole vector as mirrored leaves the
-    # right thumb on the side face instead of the front panel.
-    # Keep both thumb flexion joints close to zero.  Opposition comes from the
-    # wrist placement at the front corner rather than a hooked fingertip.
-    thumb = np.array([0.0, 0.0, 0.0])
-    fingers = np.array([-0.18, -0.12, -0.18, -0.12]) * mirror
-    opened = FINGER_OPEN[side] if "FINGER_OPEN" in globals() else np.array(
-        [0.0, 0.15, 0.15, -0.15, -0.15, -0.15, -0.15]) * mirror
-    # Grip scale changes only the two side fingers.  The thumb always reaches
-    # the same nearly straight target.
-    values = np.concatenate((thumb,
-                             opened[3:] + float(scale) * (fingers - opened[3:])))
-    low = np.array([JOINT_RANGES[name][0] for name in HAND_JOINTS[side]])
-    high = np.array([JOINT_RANGES[name][1] for name in HAND_JOINTS[side]])
-    return np.clip(values, low, high)
-
-
 FINGER_OPEN = {
-    # Index and middle stay straight.  The thumb retracts only while the hands
-    # travel laterally past the front corner; the final target above extends
-    # it almost straight onto the front panel.
     "left": np.array([0.0, -0.70, 0.0, -0.04, -0.04, -0.04, -0.04]),
     "right": np.array([0.0, 0.70, 0.0, 0.04, 0.04, 0.04, 0.04]),
 }
+FINGER_CLOSED = {
+    "left": np.array([0.0, 0.70, 1.10, -1.00, -1.30, -1.00, -1.30]),
+    "right": np.array([0.0, -0.70, -1.10, 1.00, 1.30, 1.00, 1.30]),
+}
+
+
+def finger_targets(side, scale, params: GraspParams):
+    """Interpolated DEX3 closure targets clamped to the official ranges."""
+    if not JOINT_RANGES:
+        GraspKinematics()
+    values = (FINGER_OPEN[side]
+              + float(scale) * (FINGER_CLOSED[side] - FINGER_OPEN[side]))
+    low = np.array([JOINT_RANGES[name][0] for name in HAND_JOINTS[side]])
+    high = np.array([JOINT_RANGES[name][1] for name in HAND_JOINTS[side]])
+    return np.clip(values, low, high)
