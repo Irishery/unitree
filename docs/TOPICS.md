@@ -26,6 +26,11 @@ Only `linear.x`, `linear.y`, and `angular.z` are used from `/cmd_vel`. Each valu
 | `/scan` | `sensor_msgs/msg/LaserScan` | Passive filtered 2-D projection of physical `/mid360/points` |
 | `/map` | `nav_msgs/msg/OccupancyGrid` | Online map from `hardware_mapping.launch.py` |
 
+`g1_odom_tf` republishes `/odom` and its TF with the current ROS timestamp when
+the native odometry stamp differs by more than `max_input_stamp_age_s` (default
+0.5 s). This keeps SLAM/Nav2 TF consistent with the live Mid-360 and joint-state
+stamps; pose and twist values are unchanged.
+
 ## Safety behavior
 
 - Motion starts disabled, regardless of incoming `/cmd_vel`.

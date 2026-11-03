@@ -26,6 +26,14 @@ odom -> base_footprint -> pelvis -> URDF links
 
 `base_footprint -> pelvis` defaults to the model's nominal 0.793 m height.
 
+The native odometry timestamp can be offset from the robot's ROS clock. On the
+confirmed G1 it was about 80 s behind the Mid-360 and joint-state timestamps.
+`g1_odom_tf` therefore compares the input stamp with the current ROS time and
+republishes `/odom` and TF with the current stamp when the difference exceeds
+`max_input_stamp_age_s` (default 0.5 s). The measured `x`, `y`, yaw and twist are
+not changed; only the message/TF timestamps are normalized so SLAM Toolbox and
+Nav2 can combine odometry with the live scan.
+
 No publisher was present on `/unitree/slam_mapping/points`,
 `/unitree/slam_relocation/points` or `/utlidar/range_info`. Consequently this
 bringup does not start SLAM or Nav2 yet. Enabling Nav2 without a real obstacle

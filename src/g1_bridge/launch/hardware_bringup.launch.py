@@ -25,6 +25,9 @@ def generate_launch_description():
                 "odom_source", default_value="/state_estimator/odom_pelvis"
             ),
             DeclareLaunchArgument("pelvis_height", default_value="0.793"),
+            DeclareLaunchArgument(
+                "max_input_stamp_age_s", default_value="0.5"
+            ),
             LogInfo(
                 msg="hardware_bringup.launch.py is a safe alias for "
                 "hardware_telemetry.launch.py; no motion interface will be created"
@@ -35,6 +38,9 @@ def generate_launch_description():
                     "config": LaunchConfiguration("config"),
                     "odom_source": LaunchConfiguration("odom_source"),
                     "pelvis_height": LaunchConfiguration("pelvis_height"),
+                    "max_input_stamp_age_s": LaunchConfiguration(
+                        "max_input_stamp_age_s"
+                    ),
                 }.items(),
             ),
         ]

@@ -54,6 +54,9 @@ def _launch_navigation_trial(context):
             "max_linear_x": "0.20",
             "max_linear_y": "0.0",
             "max_angular_z": "0.10",
+            "max_input_stamp_age_s": LaunchConfiguration(
+                "max_input_stamp_age_s"
+            ),
         }.items(),
     )
 
@@ -136,6 +139,9 @@ def generate_launch_description():
             DeclareLaunchArgument("motion_interface", default_value="false"),
             DeclareLaunchArgument("allow_hardware_motion", default_value="false"),
             DeclareLaunchArgument("allow_nav2_motion", default_value="false"),
+            DeclareLaunchArgument(
+                "max_input_stamp_age_s", default_value="0.5"
+            ),
             OpaqueFunction(function=_launch_navigation_trial),
         ]
     )

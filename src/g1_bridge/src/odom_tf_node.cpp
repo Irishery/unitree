@@ -24,9 +24,16 @@ class OdomTfNode final : public rclcpp::Node {
     pelvis_height_ = declare_parameter<double>("pelvis_height", 0.793);
     use_input_pelvis_z_ = declare_parameter<bool>("use_input_pelvis_z", false);
     publish_tf_ = declare_parameter<bool>("publish_tf", true);
+    max_input_stamp_age_s_ =
+        declare_parameter<double>("max_input_stamp_age_s", 0.5);
 
     if (pelvis_height_ <= 0.0) {
       throw std::runtime_error("pelvis_height must be positive");
+    }
+    if (!std::isfinite(max_input_stamp_age_s_) ||
+        max_input_stamp_age_s_ < 0.0) {
+      throw std::runtime_error(
+          "max_input_stamp_age_s must be finite and non-negative");
     }
 
     odom_pub_ = create_publisher<nav_msgs::msg::Odometry>(output_topic_, 10);
@@ -39,10 +46,12 @@ class OdomTfNode final : public rclcpp::Node {
 
     RCLCPP_INFO(
         get_logger(),
-        "Adapting %s to %s and TF %s -> %s -> %s (pelvis height %.3f m%s)",
+        "Adapting %s to %s and TF %s -> %s -> %s (pelvis height %.3f m%s, "
+        "restamp threshold %.3f s)",
         input_topic_.c_str(), output_topic_.c_str(), odom_frame_.c_str(),
         base_frame_.c_str(), pelvis_frame_.c_str(), pelvis_height_,
-        use_input_pelvis_z_ ? ", using input z" : ", fixed z");
+        use_input_pelvis_z_ ? ", using input z" : ", fixed z",
+        max_input_stamp_age_s_);
   }
 
  private:
@@ -80,9 +89,20 @@ class OdomTfNode final : public rclcpp::Node {
     tf2::Quaternion pelvis_tilt = yaw_orientation.inverse() * full_orientation;
     pelvis_tilt.normalize();
 
+    const auto now_stamp = now();
     auto stamp = input->header.stamp;
     if (stamp.sec == 0 && stamp.nanosec == 0) {
-      stamp = now();
+      stamp = now_stamp;
+    } else {
+      const rclcpp::Time input_stamp(stamp, get_clock()->get_clock_type());
+      const double age_s = (now_stamp - input_stamp).seconds();
+      if (!std::isfinite(age_s) || std::abs(age_s) > max_input_stamp_age_s_) {
+        RCLCPP_WARN_THROTTLE(
+            get_logger(), *get_clock(), 5000,
+            "Input odometry timestamp is %.3f s from now; restamping /odom and TF",
+            age_s);
+        stamp = now_stamp;
+      }
     }
 
     nav_msgs::msg::Odometry output = *input;
@@ -134,6 +154,7 @@ class OdomTfNode final : public rclcpp::Node {
   double pelvis_height_{0.793};
   bool use_input_pelvis_z_{false};
   bool publish_tf_{true};
+  double max_input_stamp_age_s_{0.5};
 
   rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr odom_pub_;
   rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odom_sub_;

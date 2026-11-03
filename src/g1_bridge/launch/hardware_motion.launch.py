@@ -85,6 +85,10 @@ def _launch_motion(context):
                     "pelvis_height": ParameterValue(
                         LaunchConfiguration("pelvis_height"), value_type=float
                     ),
+                    "max_input_stamp_age_s": ParameterValue(
+                        LaunchConfiguration("max_input_stamp_age_s"),
+                        value_type=float,
+                    ),
                     "use_input_pelvis_z": False,
                     "publish_tf": True,
                 }
@@ -119,6 +123,9 @@ def generate_launch_description():
                 "odom_source", default_value="/state_estimator/odom_pelvis"
             ),
             DeclareLaunchArgument("pelvis_height", default_value="0.793"),
+            DeclareLaunchArgument(
+                "max_input_stamp_age_s", default_value="0.5"
+            ),
             OpaqueFunction(function=_launch_motion),
         ]
     )
